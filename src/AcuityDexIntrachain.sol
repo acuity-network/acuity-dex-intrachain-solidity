@@ -5,6 +5,8 @@ import "./ERC20.sol";
 
 contract AcuityDexIntrachain {
 
+    mapping (address => mapping (address => uint)) accountTokenBalance;
+    
     /**
      * @dev Mapping of selling ERC20 contract address to buying ERC20 contract address to linked list of sell orders, starting with the lowest selling price.
      */
@@ -33,9 +35,9 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function safeTransferOut(address token, address payable to, uint value) internal {
+    function safeTransferOut(address token, address to, uint value) internal {
         if (token == address(0)) {
-            payable(to).transfer(value);
+            payable(to).transfer(value); // Fix this.
         }
         else {
             (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
@@ -86,16 +88,24 @@ contract AcuityDexIntrachain {
     }
 
     /**
+     * @dev Add sell order.
+     */
+    function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+        _addSellOrder(sellToken, buyToken, sellPrice, value);
+        accountTokenBalance[msg.sender][sellToken] -= value;
+    }
+
+    /**
      * @dev Add sell order of base coin.
      */
-    function addSellOrder(address buyToken, uint96 sellPrice) external payable {
+    function addSellOrderFromDeposit(address buyToken, uint96 sellPrice) external payable {
         _addSellOrder(address(0), buyToken, sellPrice, msg.value);
     }
 
     /**
      * @dev Add sell order of ERC20 token.
      */
-    function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+    function addSellOrderFromDepositERC20(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
         // Add the sell order.
         _addSellOrder(sellToken, buyToken, sellPrice, value);
         // Transfer the tokens from the seller to this contract.
@@ -135,36 +145,35 @@ contract AcuityDexIntrachain {
         
         orderLL[previousOrder] = orderLL[order];
         delete orderLL[order];
-        // Send the tokens or base coin back to the seller.
-        safeTransferOut(sellToken, payable(msg.sender), value);
+
+        accountTokenBalance[msg.sender][sellToken] += value;
     }
-    
-    function _buy(address sellToken, address buyToken, uint buyValue) internal {
+
+    function _buy(address sellToken, address buyToken, uint buyValueMax) internal returns (uint buyValue, uint sellValue) {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
-        // Accumulator of how much of the sell token the buyer will receive.
-        uint sellValue = 0;
         // Get the lowest sell order.
         bytes32 order = orderLL[0];
         while (order != 0) {
             (address sellAccount, uint96 sellPrice) = decodeOrder(order);
             uint orderSellValue = orderValue[order];
-            uint matchedSellValue = (buyValue * 1 ether) / sellPrice;
+            uint matchedSellValue = (buyValueMax * 1 ether) / sellPrice;
 
             if (orderSellValue > matchedSellValue) {
                 // Partial buy.
                 orderValue[order] -= matchedSellValue;
                 // Transfer value.
+                buyValue += buyValueMax;
+                accountTokenBalance[sellAccount][buyToken] += buyValueMax;
                 sellValue += matchedSellValue;
-                safeTransferOut(buyToken, payable(sellAccount), buyValue);
                 break;
             }
             else {
                 // Full buy.
                 uint matchedBuyValue = (orderSellValue * sellPrice) / 1 ether;
-                buyValue -= matchedBuyValue;
+                buyValueMax -= matchedBuyValue;
                 bytes32 next = orderLL[order];
                 // Delete the sell order.
                 orderLL[0] = next;
@@ -172,31 +181,96 @@ contract AcuityDexIntrachain {
                 delete orderValue[order];
                 order = next;
                 // Transfer value.
+                buyValue += matchedBuyValue;
+                accountTokenBalance[sellAccount][buyToken] += matchedBuyValue;
                 sellValue += orderSellValue;
-                safeTransferOut(buyToken, payable(sellAccount), matchedBuyValue);
             }
-        }
-        
-        if (sellValue > 0) {
-            safeTransferOut(sellToken, payable(msg.sender), sellValue);
         }
     }
 
+    function deposit() external payable {
+        accountTokenBalance[msg.sender][address(0)] += msg.value;
+    }
+
+    function depositERC20(address token, uint value) external {
+        accountTokenBalance[msg.sender][token] += value;
+        safeTransferIn(token, value);
+    }
+
+    function withdraw(address token, uint value) external {
+        accountTokenBalance[msg.sender][token] -= value;
+        safeTransferOut(token, msg.sender, value);
+    }
+
+    /**
+     * @dev Buy.
+     */
+    function buy(address sellToken, address buyToken, uint buyValueMax) external {
+        // Execute the buy.
+        (uint buyValue, uint sellValue) = _buy(sellToken, buyToken, buyValueMax);
+        accountTokenBalance[msg.sender][buyToken] -= buyValue;
+        accountTokenBalance[msg.sender][sellToken] += sellValue;
+    }
+
+    /**
+     * @dev Buy with balance and withdraw.
+     */
+    function buyAndWithdraw(address sellToken, address buyToken, uint buyValueMax) external {
+        // Execute the buy.
+        (uint buyValue, uint sellValue) = _buy(sellToken, buyToken, buyValueMax);
+        accountTokenBalance[msg.sender][buyToken] -= buyValue;
+        safeTransferOut(sellToken, msg.sender, sellValue);
+    }
+    
     /**
      * @dev Buy with base coin.
      */
-    function buy(address sellToken) external payable {
-        _buy(sellToken, address(0), msg.value);
+    function buyWithDeposit(address sellToken) external payable {
+        (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
+        accountTokenBalance[msg.sender][sellToken] += sellValue;
+        // Send the change back.
+        if (buyValue < msg.value) {
+            safeTransferOut(address(0), msg.sender, msg.value - buyValue);
+        }
     }
 
     /**
      * @dev Buy with ERC20 token.
      */
-    function buy(address sellToken, address buyToken, uint buyValue) external {
-        // Transfer the tokens from the buyer to this contract.
-        safeTransferIn(buyToken, buyValue);
+    function buyWithDepositERC20(address sellToken, address buyToken, uint buyValueMax) external {
         // Execute the buy.
-        _buy(sellToken, buyToken, buyValue);
+        (uint buyValue, uint sellValue) = _buy(sellToken, buyToken, buyValueMax);
+        // Transfer the buy tokens from the buyer to this contract.
+        safeTransferIn(buyToken, buyValue);
+        accountTokenBalance[msg.sender][sellToken] += sellValue;
     }
 
+    /**
+     * @dev Buy with base coin.
+     */
+    function buyWithDepositAndWithdraw(address sellToken) external payable {
+        (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
+        // Transfer the sell tokens to the buyer.
+        if (sellValue > 0) {
+            safeTransferOut(sellToken, msg.sender, sellValue);
+        }
+        // Send the change back.
+        if (buyValue < msg.value) {
+            safeTransferOut(address(0), msg.sender, msg.value - buyValue);
+        }
+    }
+
+    /**
+     * @dev Buy with ERC20 token.
+     */
+    function buyWithDepositAndWithdrawERC20(address sellToken, address buyToken, uint buyValueMax) external {
+        // Execute the buy.
+        (uint buyValue, uint sellValue) = _buy(sellToken, buyToken, buyValueMax);
+        // Transfer the buy tokens from the buyer to this contract.
+        safeTransferIn(buyToken, buyValue);
+        // Transfer the sell tokens to the buyer.
+        if (sellValue > 0) {
+            safeTransferOut(sellToken, msg.sender, sellValue);
+        }
+    }
 }
