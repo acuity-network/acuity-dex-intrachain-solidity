@@ -41,13 +41,11 @@ contract AcuityDexIntrachain {
 
     }
 
-    function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        safeTransferFrom(sellToken, msg.sender, address(this), value);
-
-        bytes32 order = encodeOrder(msg.sender, sellPrice);
-
+    function _addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) internal {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        
+        bytes32 order = encodeOrder(msg.sender, sellPrice);
 
         // Does this order already exist?
         if (orderValue[order] > 0) {
@@ -72,6 +70,16 @@ contract AcuityDexIntrachain {
         orderLL[prev] = order;
         orderLL[order] = next;
         orderValue[order] = value;
+    }
+
+    function addSellOrder(address buyToken, uint96 sellPrice) external payable {
+        _addSellOrder(address(0), buyToken, sellPrice, msg.value);
+    }
+
+    function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+        safeTransferFrom(sellToken, msg.sender, address(this), value);
+
+        _addSellOrder(sellToken, buyToken, sellPrice, value);
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
