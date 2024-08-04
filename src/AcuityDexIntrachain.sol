@@ -116,7 +116,12 @@ contract AcuityDexIntrachain {
         orderLL[previousOrder] = orderLL[order];
         delete orderLL[order];
         
-        safeTransfer(sellToken, msg.sender, value);
+        if (sellToken == address(0)) {
+            payable(msg.sender).transfer(value);
+        }
+        else {
+            safeTransfer(sellToken, msg.sender, value);
+        }
     }
 
     function buy(address sellToken, address buyToken, uint buyValue) external {
