@@ -5,11 +5,6 @@ import "./ERC20.sol";
 
 contract AcuityIntrachainERC20 {
 
-    struct Order {
-        address account;
-        uint96 price;
-    }
-
     /**
      * @dev Mapping of selling ERC20 contract address to buying ERC20 contract address to linked list of sell orders, starting with the lowest selling price.
      */
@@ -79,12 +74,41 @@ contract AcuityIntrachainERC20 {
         orderValue[order] = value;
     }
 
-    function removeSellOrder(address sellToken, address buyToken, uint sellPrice, uint value) external {
-
+    function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+        bytes32 order = encodeOrder(msg.sender, sellPrice);
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
     }
 
-    function removeSellOrder(address sellToken, address buyToken, uint sellPrice) external {
+    function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice) external {
+        bytes32 order = encodeOrder(msg.sender, sellPrice);
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        
+        uint value = sellBuyOrderValue[sellToken][buyToken][order];
+        
+        if (value == 0) {
+            return;
+        }
 
+        delete orderValue[order];
+
+        // Find the previous sell order.
+
+        bytes32 previousOrder = 0;
+
+        while (orderLL[previousOrder] != order) {
+            previousOrder = orderLL[previousOrder];
+        }
+        
+        orderLL[previousOrder] = orderLL[order];
+        delete orderLL[order];
+        
+        safeTransfer(sellToken, msg.sender, value);
     }
 
     function buy(address sellToken, address buyToken, uint buyValue) external {
