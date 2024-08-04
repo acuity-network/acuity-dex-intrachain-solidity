@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.26;
 
 import {Test, console} from "forge-std/Test.sol";
 import {AcuityIntrachainERC20} from "../src/AcuityIntrachainERC20.sol";
@@ -10,4 +10,9 @@ contract AcuityIntrachainERC20Test is Test {
     function setUp() public {
         intrachainERC20 = new AcuityIntrachainERC20();
     }
+
+    function testStub() public {
+        assert(true);
+    }
+
 }
