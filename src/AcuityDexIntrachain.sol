@@ -15,26 +15,41 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    error TokensNotDifferent(address sellToken, address buyToken);
+
+    /**
+     * @dev
+     */
     error TokenTransferFailed(address token, address from, address to, uint value);
 
     /**
      * @dev
      */
-    function safeTransfer(address token, address to, uint value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, address(this), to, value);
+    function safeTransfer(address token, address payable to, uint value) internal {
+        if (token == address(0)) {
+            payable(to).transfer(value);
+        }
+        else {
+            (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
+            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, address(this), to, value);
+        }
     }
 
     /**
      * @dev
      */
-    function safeTransferFrom(address token, address from, address to, uint value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, from, to, value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, from, to, value);
+    function safeTransferFromSender(address token, address to, uint value) internal {
+        if (token == address(0)) {
+            payable(to).transfer(value);
+        }
+        else {
+            (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, to, value));
+            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, msg.sender, to, value);
+        }
     }
 
-    function encodeOrder(address account, uint96 sellPrice) internal pure returns (bytes32 order) {
-        order = bytes32(bytes20(account)) | bytes32(bytes12(sellPrice));
+    function encodeOrder(uint96 sellPrice) internal view returns (bytes32 order) {
+        order = bytes32(bytes20(msg.sender)) | bytes32(bytes12(sellPrice));
     }
 
     function decodeOrder(bytes32 order) internal pure returns (address account, uint96 sellPrice) {
@@ -42,10 +57,13 @@ contract AcuityDexIntrachain {
     }
 
     function _addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) internal {
+        if (sellToken == buyToken) {
+            revert TokensNotDifferent(sellToken, buyToken);
+        }
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         
-        bytes32 order = encodeOrder(msg.sender, sellPrice);
+        bytes32 order = encodeOrder(sellPrice);
 
         // Does this order already exist?
         if (orderValue[order] > 0) {
@@ -77,13 +95,13 @@ contract AcuityDexIntrachain {
     }
 
     function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        safeTransferFrom(sellToken, msg.sender, address(this), value);
+        safeTransferFromSender(sellToken, address(this), value);
 
         _addSellOrder(sellToken, buyToken, sellPrice, value);
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        bytes32 order = encodeOrder(msg.sender, sellPrice);
+        bytes32 order = encodeOrder(sellPrice);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -91,13 +109,13 @@ contract AcuityDexIntrachain {
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice) external {
-        bytes32 order = encodeOrder(msg.sender, sellPrice);
+        bytes32 order = encodeOrder(sellPrice);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         
-        uint value = sellBuyOrderValue[sellToken][buyToken][order];
+        uint value = orderValue[order];
         
         if (value == 0) {
             return;
@@ -116,15 +134,10 @@ contract AcuityDexIntrachain {
         orderLL[previousOrder] = orderLL[order];
         delete orderLL[order];
         
-        if (sellToken == address(0)) {
-            payable(msg.sender).transfer(value);
-        }
-        else {
-            safeTransfer(sellToken, msg.sender, value);
-        }
+        safeTransfer(sellToken, payable(msg.sender), value);
     }
-
-    function buy(address sellToken, address buyToken, uint buyValue) external {
+    
+    function _buy(address sellToken, address buyToken, uint buyValue) internal {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -143,7 +156,7 @@ contract AcuityDexIntrachain {
                 orderValue[order] -= matchedSellValue;
                 // Transfer value.
                 sellValue += matchedSellValue;
-                safeTransferFrom(buyToken, msg.sender, sellAccount, buyValue);
+                safeTransferFromSender(buyToken, sellAccount, buyValue);
                 break;
             }
             else {
@@ -158,13 +171,21 @@ contract AcuityDexIntrachain {
                 order = next;
                 // Transfer value.
                 sellValue += orderSellValue;
-                safeTransferFrom(buyToken, msg.sender, sellAccount, matchedBuyValue);
+                safeTransferFromSender(buyToken, sellAccount, matchedBuyValue);
             }
         }
-
+        
         if (sellValue > 0) {
-            safeTransfer(sellToken, msg.sender, sellValue);
+            safeTransfer(sellToken, payable(msg.sender), sellValue);
         }
+    }
+
+    function buy(address sellToken) external payable {
+        _buy(sellToken, address(0), msg.value);
+    }
+
+    function buy(address sellToken, address buyToken, uint buyValue) external {
+        _buy(sellToken, buyToken, buyValue);
     }
 
 }
