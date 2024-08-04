@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import "./ERC20.sol";
 
-contract AcuityIntrachainERC20 {
+contract AcuityDexIntrachain {
 
     /**
      * @dev Mapping of selling ERC20 contract address to buying ERC20 contract address to linked list of sell orders, starting with the lowest selling price.
