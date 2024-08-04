@@ -25,26 +25,21 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function safeTransfer(address token, address payable to, uint value) internal {
+    function safeTransferIn(address token, uint value) internal {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, msg.sender, address(this), value);
+    }
+
+    /**
+     * @dev
+     */
+    function safeTransferOut(address token, address payable to, uint value) internal {
         if (token == address(0)) {
             payable(to).transfer(value);
         }
         else {
             (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
             if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, address(this), to, value);
-        }
-    }
-
-    /**
-     * @dev
-     */
-    function safeTransferFromSender(address token, address to, uint value) internal {
-        if (token == address(0)) {
-            payable(to).transfer(value);
-        }
-        else {
-            (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, to, value));
-            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, msg.sender, to, value);
         }
     }
 
@@ -90,14 +85,21 @@ contract AcuityDexIntrachain {
         orderValue[order] = value;
     }
 
+    /**
+     * @dev Add sell order of base coin.
+     */
     function addSellOrder(address buyToken, uint96 sellPrice) external payable {
         _addSellOrder(address(0), buyToken, sellPrice, msg.value);
     }
 
+    /**
+     * @dev Add sell order of ERC20 token.
+     */
     function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        safeTransferFromSender(sellToken, address(this), value);
-
+        // Add the sell order.
         _addSellOrder(sellToken, buyToken, sellPrice, value);
+        // Transfer the tokens from the seller to this contract.
+        safeTransferIn(sellToken, value);
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
@@ -133,8 +135,8 @@ contract AcuityDexIntrachain {
         
         orderLL[previousOrder] = orderLL[order];
         delete orderLL[order];
-        
-        safeTransfer(sellToken, payable(msg.sender), value);
+        // Send the tokens or base coin back to the seller.
+        safeTransferOut(sellToken, payable(msg.sender), value);
     }
     
     function _buy(address sellToken, address buyToken, uint buyValue) internal {
@@ -156,7 +158,7 @@ contract AcuityDexIntrachain {
                 orderValue[order] -= matchedSellValue;
                 // Transfer value.
                 sellValue += matchedSellValue;
-                safeTransferFromSender(buyToken, sellAccount, buyValue);
+                safeTransferOut(buyToken, payable(sellAccount), buyValue);
                 break;
             }
             else {
@@ -171,20 +173,29 @@ contract AcuityDexIntrachain {
                 order = next;
                 // Transfer value.
                 sellValue += orderSellValue;
-                safeTransferFromSender(buyToken, sellAccount, matchedBuyValue);
+                safeTransferOut(buyToken, payable(sellAccount), matchedBuyValue);
             }
         }
         
         if (sellValue > 0) {
-            safeTransfer(sellToken, payable(msg.sender), sellValue);
+            safeTransferOut(sellToken, payable(msg.sender), sellValue);
         }
     }
 
+    /**
+     * @dev Buy with base coin.
+     */
     function buy(address sellToken) external payable {
         _buy(sellToken, address(0), msg.value);
     }
 
+    /**
+     * @dev Buy with ERC20 token.
+     */
     function buy(address sellToken, address buyToken, uint buyValue) external {
+        // Transfer the tokens from the buyer to this contract.
+        safeTransferIn(buyToken, buyValue);
+        // Execute the buy.
         _buy(sellToken, buyToken, buyValue);
     }
 
