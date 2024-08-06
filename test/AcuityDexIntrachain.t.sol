@@ -24,7 +24,7 @@ contract AcuityDexIntrachainTest is Test {
         dexHarness = new AcuityDexIntrachainHarness();
     }
 
-    function testEncodeDecodeOrderId() public {
+    function testEncodeDecodeOrderId() public view {
         bytes32 orderId = dexHarness.encodeOrderIdHarness(5678);
         console.logBytes32(orderId);
         (address account, uint96 price) = dexHarness.decodeOrderIdHarness(orderId);
@@ -32,4 +32,7 @@ contract AcuityDexIntrachainTest is Test {
         assertEq(price, 5678);
     }
 
+    function testAdjustOrderPrice() public {
+        
+    }
 }

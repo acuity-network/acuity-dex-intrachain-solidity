@@ -22,6 +22,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    error OrderNotFound(address sellToken, address buyToken, address account, uint value);
+
+    /**
+     * @dev
+     */
     error TokenTransferFailed(address token, address from, address to, uint value);
 
     /**
@@ -55,27 +60,28 @@ contract AcuityDexIntrachain {
         price = uint96(uint(orderId));
     }
 
-    function _addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) internal {
+    function _addOrder(address sellToken, address buyToken, uint96 price, uint value) internal {
         if (sellToken == buyToken) {
             revert TokensNotDifferent(sellToken, buyToken);
         }
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         
-        bytes32 order = encodeOrderId(sellPrice);
+        bytes32 orderId = encodeOrderId(price);
 
         // Does this order already exist?
-        if (orderValue[order] > 0) {
-            orderValue[order] += value;
+        if (orderValue[orderId] > 0) {
+            orderValue[orderId] += value;
             return;
         }
 
+        // Find correct place in linked list to insert order.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         bytes32 prev = 0;
-        bytes32 next = orderLL[prev];
+        bytes32 next = orderLL[0];
         while (next != 0) {
-            (, uint96 nextSellPrice) = decodeOrderId(next);
-
-            if (nextSellPrice > sellPrice) {
+            (, uint96 nextPrice) = decodeOrderId(next);
+            // This ensures that new orders go after existing orders with the same price.
+            if (nextPrice > price) {
                 break;
             }
 
@@ -84,76 +90,129 @@ contract AcuityDexIntrachain {
         }
 
         // Insert into linked list.
-        orderLL[prev] = order;
-        orderLL[order] = next;
-        orderValue[order] = value;
+        orderLL[prev] = orderId;
+        orderLL[orderId] = next;
+        orderValue[orderId] = value;
     }
 
     /**
      * @dev Add sell order.
      */
-    function addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        _addSellOrder(sellToken, buyToken, sellPrice, value);
+    function addOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+        _addOrder(sellToken, buyToken, sellPrice, value);
         accountTokenBalance[msg.sender][sellToken] -= value;
     }
 
     /**
      * @dev Add sell order of base coin.
      */
-    function addSellOrderFromDeposit(address buyToken, uint96 sellPrice) external payable {
-        _addSellOrder(address(0), buyToken, sellPrice, msg.value);
+    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable {
+        _addOrder(address(0), buyToken, sellPrice, msg.value);
     }
 
     /**
      * @dev Add sell order of ERC20 token.
      */
-    function addSellOrderFromDepositERC20(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+    function addOrderWithDepositERC20(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
         // Add the sell order.
-        _addSellOrder(sellToken, buyToken, sellPrice, value);
+        _addOrder(sellToken, buyToken, sellPrice, value);
         // Transfer the tokens from the seller to this contract.
         safeTransferIn(sellToken, value);
     }
 
-    function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        bytes32 order = encodeOrderId(sellPrice);
+    function removeOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+
+        bytes32 orderId = encodeOrderId(sellPrice);
+        if (orderValue[orderId] == 0) {
+            revert OrderNotFound(sellToken, buyToken, msg.sender, sellPrice);
+        }
     }
 
-    function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice) external {
-        bytes32 order = encodeOrderId(sellPrice);
+    function removeOrder(address sellToken, address buyToken, uint96 sellPrice) external {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+
+        bytes32 orderId = encodeOrderId(sellPrice);
         
-        uint value = orderValue[order];
+        uint value = orderValue[orderId];
         
         if (value == 0) {
-            return;
+            revert OrderNotFound(sellToken, buyToken, msg.sender, sellPrice);
         }
 
-        delete orderValue[order];
+        delete orderValue[orderId];
 
         // Find the previous sell order.
 
-        bytes32 previousOrder = 0;
+        bytes32 prev = 0;
 
-        while (orderLL[previousOrder] != order) {
-            previousOrder = orderLL[previousOrder];
+        while (orderLL[prev] != orderId) {
+            prev = orderLL[prev];
         }
         
-        orderLL[previousOrder] = orderLL[order];
-        delete orderLL[order];
+        orderLL[prev] = orderLL[orderId];
+        delete orderLL[orderId];
 
         accountTokenBalance[msg.sender][sellToken] += value;
     }
 
-    function changeOrder(uint96 oldPrice, uint96 newPrice) external {
+    function adjustOrderPrice(address sellToken, address buyToken, uint96 oldPrice, uint96 newPrice) external {
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+
         bytes32 oldOrder = encodeOrderId(oldPrice);
         bytes32 newOrder = encodeOrderId(newPrice);
+
+        if (orderValue[oldOrder] == 0) {
+            revert OrderNotFound(sellToken, buyToken, msg.sender, oldPrice);
+        }
+
+        // Find oldPrev
+        bytes32 oldPrev = 0;
+        bytes32 next = orderLL[0];
+        while (next != oldOrder) {
+            oldPrev = next;
+            next = orderLL[oldPrev];
+        }
+
+        // Find newPrev
+        bytes32 newPrev = 0;
+        next = orderLL[0];
+        while (next != 0) {
+            (, uint96 nextSellPrice) = decodeOrderId(next);
+
+            if (nextSellPrice > newPrice) {
+                break;
+            }
+
+            newPrev = next;
+            next = orderLL[newPrev];
+        }
+
+        // Are we replacing the existing order?
+        if (newPrev == oldPrev || newPrev == oldOrder) {
+            orderLL[oldPrev] = newOrder;
+            orderLL[newOrder] = orderLL[oldOrder];
+        }
+        else {
+            // Remove old order from linked list.
+            orderLL[oldPrev] = orderLL[oldOrder];
+            // Insert into linked list.
+            orderLL[newPrev] = newOrder;
+            orderLL[newOrder] = next;
+        }
+
+        delete orderLL[oldOrder];
+        orderValue[newOrder] = orderValue[oldOrder];
+        delete orderValue[oldOrder];
     }
 
     function _buy(address sellToken, address buyToken, uint buyValueMax) internal returns (uint buyValue, uint sellValue) {
