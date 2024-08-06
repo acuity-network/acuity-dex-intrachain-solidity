@@ -339,4 +339,45 @@ contract AcuityDexIntrachain {
             safeTransferOut(sellToken, msg.sender, sellValue);
         }
     }
+
+    struct Order {
+        address account;
+        uint price;
+        uint value;
+    }
+
+    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view returns (Order[] memory orderBook){
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        uint orderCount = 0;
+        
+        bytes32 orderId = orderLL[0];
+
+        if (maxOrders == 0) {
+            while (orderId != 0) {
+                orderCount++;
+                orderId = orderLL[orderId];
+            }
+        }
+        else {
+            while (orderId != 0 && orderCount < maxOrders) {
+                orderCount++;
+                orderId = orderLL[orderId];
+            }
+        }
+        orderBook = new Order[](orderCount);
+
+        orderId = orderLL[0];
+        for (uint i = 0; i < orderCount; i++) {
+            (address sellAccount, uint96 sellPrice) = decodeOrderId(orderId);
+            
+            orderBook[i] = Order({
+                account: sellAccount,
+                price: sellPrice,
+                value: orderValue[orderId] 
+            });
+
+            orderId = orderLL[orderId];
+        }
+    }
 }
