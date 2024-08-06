@@ -36,6 +36,7 @@ contract AcuityDexIntrachain {
      * @dev
      */
     function safeTransferOut(address token, address to, uint value) internal {
+        // https://docs.openzeppelin.com/contracts/3.x/api/utils#Address-sendValue-address-payable-uint256-
         if (token == address(0)) {
             payable(to).transfer(value); // Fix this.
         }
@@ -45,12 +46,13 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function encodeOrder(uint96 sellPrice) internal view returns (bytes32 order) {
-        order = bytes32(bytes20(msg.sender)) | bytes32(bytes12(sellPrice));
+    function encodeOrderId(uint96 price) internal view returns (bytes32 orderId) {
+        orderId = bytes32(bytes20(msg.sender)) | bytes32(uint(price));
     }
 
-    function decodeOrder(bytes32 order) internal pure returns (address account, uint96 sellPrice) {
-
+    function decodeOrderId(bytes32 orderId) internal pure returns (address account, uint96 price) {
+        account = address(bytes20(orderId));
+        price = uint96(uint(orderId));
     }
 
     function _addSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) internal {
@@ -60,7 +62,7 @@ contract AcuityDexIntrachain {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         
-        bytes32 order = encodeOrder(sellPrice);
+        bytes32 order = encodeOrderId(sellPrice);
 
         // Does this order already exist?
         if (orderValue[order] > 0) {
@@ -71,7 +73,7 @@ contract AcuityDexIntrachain {
         bytes32 prev = 0;
         bytes32 next = orderLL[prev];
         while (next != 0) {
-            (, uint96 nextSellPrice) = decodeOrder(next);
+            (, uint96 nextSellPrice) = decodeOrderId(next);
 
             if (nextSellPrice > sellPrice) {
                 break;
@@ -113,7 +115,7 @@ contract AcuityDexIntrachain {
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        bytes32 order = encodeOrder(sellPrice);
+        bytes32 order = encodeOrderId(sellPrice);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -121,7 +123,7 @@ contract AcuityDexIntrachain {
     }
 
     function removeSellOrder(address sellToken, address buyToken, uint96 sellPrice) external {
-        bytes32 order = encodeOrder(sellPrice);
+        bytes32 order = encodeOrderId(sellPrice);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -149,6 +151,11 @@ contract AcuityDexIntrachain {
         accountTokenBalance[msg.sender][sellToken] += value;
     }
 
+    function changeOrder(uint96 oldPrice, uint96 newPrice) external {
+        bytes32 oldOrder = encodeOrderId(oldPrice);
+        bytes32 newOrder = encodeOrderId(newPrice);
+    }
+
     function _buy(address sellToken, address buyToken, uint buyValueMax) internal returns (uint buyValue, uint sellValue) {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
@@ -157,7 +164,7 @@ contract AcuityDexIntrachain {
         // Get the lowest sell order.
         bytes32 order = orderLL[0];
         while (order != 0) {
-            (address sellAccount, uint96 sellPrice) = decodeOrder(order);
+            (address sellAccount, uint96 sellPrice) = decodeOrderId(order);
             uint orderSellValue = orderValue[order];
             uint matchedSellValue = (buyValueMax * 1 ether) / sellPrice;
 
