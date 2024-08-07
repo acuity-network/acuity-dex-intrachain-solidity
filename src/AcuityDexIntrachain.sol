@@ -17,6 +17,21 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    event Deposit(address token, address account, uint value);
+
+    /**
+     * @dev
+     */
+    event Withdrawal(address token, address account, uint value);
+    
+    /**
+     * @dev
+     */
+    error NoValue();
+
+    /**
+     * @dev
+     */
     error TokensNotDifferent(address sellToken, address buyToken);
 
     /**
@@ -28,6 +43,14 @@ contract AcuityDexIntrachain {
      * @dev
      */
     error TokenTransferFailed(address token, address from, address to, uint value);
+
+    /**
+     * @dev Revert if no value is sent.
+     */
+    modifier hasValue() {
+        require (msg.value > 0, NoValue());
+        _;
+    }
 
     /**
      * @dev
@@ -62,6 +85,34 @@ contract AcuityDexIntrachain {
     function decodeOrderId(bytes32 orderId) internal pure returns (address account, uint96 price) {
         account = address(bytes20(orderId));
         price = uint96(uint(orderId));
+    }
+
+    /**
+     * @dev Fallback function.
+     */
+    function deposit() external payable hasValue {
+        // Update balance.
+        accountTokenBalance[msg.sender][address(0)] += msg.value;
+        // Log event.
+        emit Deposit(address(0), msg.sender, msg.value);
+    }
+
+    function depositERC20(address token, uint value) external {
+        // Update balance.
+        accountTokenBalance[msg.sender][token] += value;
+        // Transfer value.
+        safeTransferIn(token, value);
+        // Log event.
+        emit Deposit(token, msg.sender, value);
+    }
+
+    function withdraw(address token, uint value) external {
+        // Update balance.
+        accountTokenBalance[msg.sender][token] -= value;
+        // Transfer value.
+        safeTransferOut(token, msg.sender, value);
+        // Log event.
+        emit Withdrawal(token, msg.sender, value);
     }
 
     function _addOrder(address sellToken, address buyToken, uint96 price, uint value) internal {
@@ -110,7 +161,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable {
+    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable hasValue {
         _addOrder(address(0), buyToken, sellPrice, msg.value);
     }
 
@@ -264,22 +315,6 @@ contract AcuityDexIntrachain {
         }
     }
 
-    // default?
-
-    function deposit() external payable {
-        accountTokenBalance[msg.sender][address(0)] += msg.value;
-    }
-
-    function depositERC20(address token, uint value) external {
-        accountTokenBalance[msg.sender][token] += value;
-        safeTransferIn(token, value);
-    }
-
-    function withdraw(address token, uint value) external {
-        accountTokenBalance[msg.sender][token] -= value;
-        safeTransferOut(token, msg.sender, value);
-    }
-
     /**
      * @dev Buy.
      */
@@ -303,7 +338,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDeposit(address sellToken) external payable {
+    function buyWithDeposit(address sellToken) external payable hasValue {
         (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
         accountTokenBalance[msg.sender][sellToken] += sellValue;
         // Send the change back.
@@ -326,7 +361,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(address sellToken) external payable {
+    function buyWithDepositAndWithdraw(address sellToken) external payable hasValue {
         (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
         // Transfer the sell tokens to the buyer.
         if (sellValue > 0) {
@@ -352,6 +387,16 @@ contract AcuityDexIntrachain {
         }
     }
 
+    /**
+     * @dev Get balance of token for account.
+     */
+    function getBalance(address token, address account) external view returns (uint value) {
+        value = accountTokenBalance[account][token];
+    }
+
+    /**
+     * @dev
+     */
     struct Order {
         address account;
         uint price;
@@ -359,6 +404,9 @@ contract AcuityDexIntrachain {
     }
 
     // paging?
+    /**
+     * @dev
+     */
     function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view returns (Order[] memory orderBook) {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
@@ -394,6 +442,9 @@ contract AcuityDexIntrachain {
         }
     }
 
+    /**
+     * @dev
+     */
     function getOrderValue(address sellToken, address buyToken, address seller, uint96 price) external view returns (uint value) {
         bytes32 orderId = encodeOrderId(seller, price);
         value = sellBuyOrderValue[sellToken][buyToken][orderId];

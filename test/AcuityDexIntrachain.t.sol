@@ -15,7 +15,8 @@ contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
     
 }
 
-contract AcuityDexIntrachainTest is Test {
+contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
+
     AcuityDexIntrachain public dex;
     AcuityDexIntrachainHarness public dexHarness;
 
@@ -34,5 +35,20 @@ contract AcuityDexIntrachainTest is Test {
 
     function testAdjustOrderPrice() public {
         
+    }
+
+    function testDeposit() public {
+        vm.expectRevert(NoValue.selector);
+        dex.deposit();
+
+        vm.expectEmit(false, false, false, true);
+        emit Deposit(address(0), address(this), 1);
+        dex.deposit{value: 1}();
+        assertEq(dex.getBalance(address(0), address(this)), 1);
+
+        vm.expectEmit(false, false, false, true);
+        emit Deposit(address(0), address(this), 12345);
+        dex.deposit{value: 12345}();
+        assertEq(dex.getBalance(address(0), address(this)), 12346);
     }
 }
