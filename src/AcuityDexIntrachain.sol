@@ -51,6 +51,10 @@ contract AcuityDexIntrachain {
         }
     }
 
+    function encodeOrderId(address seller, uint96 price) internal view returns (bytes32 orderId) {
+        orderId = bytes32(bytes20(seller)) | bytes32(uint(price));
+    }
+
     function encodeOrderId(uint96 price) internal view returns (bytes32 orderId) {
         orderId = bytes32(bytes20(msg.sender)) | bytes32(uint(price));
     }
@@ -254,6 +258,8 @@ contract AcuityDexIntrachain {
         }
     }
 
+    // default?
+
     function deposit() external payable {
         accountTokenBalance[msg.sender][address(0)] += msg.value;
     }
@@ -307,8 +313,8 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint buyValue, uint sellValue) = _buy(sellToken, buyToken, buyValueMax);
         // Transfer the buy tokens from the buyer to this contract.
-        safeTransferIn(buyToken, buyValue);
         accountTokenBalance[msg.sender][sellToken] += sellValue;
+        safeTransferIn(buyToken, buyValue);
     }
 
     /**
@@ -346,7 +352,8 @@ contract AcuityDexIntrachain {
         uint value;
     }
 
-    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view returns (Order[] memory orderBook){
+    // paging?
+    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view returns (Order[] memory orderBook) {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         uint orderCount = 0;
@@ -379,5 +386,10 @@ contract AcuityDexIntrachain {
 
             orderId = orderLL[orderId];
         }
+    }
+
+    function getOrderValue(address sellToken, address buyToken, address seller, uint96 price) external view returns (uint value) {
+        bytes32 orderId = encodeOrderId(seller, price);
+        value = sellBuyOrderValue[sellToken][buyToken][orderId];
     }
 }
