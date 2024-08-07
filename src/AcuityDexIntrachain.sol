@@ -42,13 +42,18 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error TokenTransferFailed(address token, address from, address to, uint value);
+    error TokenTransferInFailed(address token, address from, uint value);
+
+    /**
+     * @dev
+     */
+    error TokenTransferOutFailed(address token, address to, uint value);
 
     /**
      * @dev Revert if no value is sent.
      */
     modifier hasValue() {
-        require (msg.value > 0, NoValue());
+        if (msg.value == 0) revert NoValue();
         _;
     }
 
@@ -57,7 +62,7 @@ contract AcuityDexIntrachain {
      */
     function safeTransferIn(address token, uint value) internal {
         (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, msg.sender, address(this), value);
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferInFailed(token, msg.sender, value);
     }
 
     /**
@@ -70,7 +75,7 @@ contract AcuityDexIntrachain {
         }
         else {
             (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
-            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed(token, address(this), to, value);
+            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferOutFailed(token, to, value);
         }
     }
 
@@ -96,6 +101,8 @@ contract AcuityDexIntrachain {
         // Log event.
         emit Deposit(address(0), msg.sender, msg.value);
     }
+
+    // ERC1155?
 
     function depositERC20(address token, uint value) external {
         // Update balance.
