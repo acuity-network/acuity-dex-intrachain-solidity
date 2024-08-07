@@ -74,12 +74,12 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function encodeOrderId(address seller, uint96 price) internal view returns (bytes32 orderId) {
-        orderId = bytes32(bytes20(seller)) | bytes32(uint(price));
-    }
-
     function encodeOrderId(uint96 price) internal view returns (bytes32 orderId) {
         orderId = bytes32(bytes20(msg.sender)) | bytes32(uint(price));
+    }
+
+    function encodeOrderId(address seller, uint96 price) internal view returns (bytes32 orderId) {
+        orderId = bytes32(bytes20(seller)) | bytes32(uint(price));
     }
 
     function decodeOrderId(bytes32 orderId) internal pure returns (address account, uint96 price) {
