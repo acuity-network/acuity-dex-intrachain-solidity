@@ -32,6 +32,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    error InsufficientBalance();
+
+    /**
+     * @dev
+     */
     error TokensNotDifferent(address sellToken, address buyToken);
 
     /**
@@ -114,8 +119,25 @@ contract AcuityDexIntrachain {
     }
 
     function withdraw(address token, uint value) external {
+        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+        // Check there is sufficient balance.
+        if (tokenBalance[token] < value) revert InsufficientBalance();
         // Update balance.
         accountTokenBalance[msg.sender][token] -= value;
+        // Transfer value.
+        safeTransferOut(token, msg.sender, value);
+        // Log event.
+        emit Withdrawal(token, msg.sender, value);
+    }
+
+    function withdrawAll(address token) external {
+        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+        // Get token balance.
+        uint value = tokenBalance[token];
+        // Check there is a balance.
+        if (value == 0) revert InsufficientBalance();
+        // Delete token balance.
+        delete tokenBalance[token];
         // Transfer value.
         safeTransferOut(token, msg.sender, value);
         // Log event.

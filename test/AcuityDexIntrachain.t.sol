@@ -56,6 +56,8 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     AcuityDexIntrachainHarness public dexHarness;
     DummyToken dummyToken;
 
+    receive() external payable {}
+
     function setUp() public {
         dex = new AcuityDexIntrachain();
         dexHarness = new AcuityDexIntrachainHarness();
@@ -98,14 +100,77 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         vm.expectRevert(error);
         dex.depositERC20(address(dummyToken), 1001);
 
+        uint oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(dummyToken), address(this), 10);
         dex.depositERC20(address(dummyToken), 10);
         assertEq(dex.getBalance(address(dummyToken), address(this)), 10);
+        uint newBalance = dummyToken.balanceOf(address(this));
+        assertEq(oldBalance - newBalance, 10);
 
+        oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(dummyToken), address(this), 20);
         dex.depositERC20(address(dummyToken), 20);
         assertEq(dex.getBalance(address(dummyToken), address(this)), 30);
+        newBalance = dummyToken.balanceOf(address(this));
+        assertEq(oldBalance - newBalance, 20);
+    }
+
+    function testWithdraw() public {
+        dex.deposit{value: 1}();
+        vm.expectRevert(InsufficientBalance.selector);
+        dex.withdraw(address(0), 2);
+        
+        uint oldBalance = address(this).balance;
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(0), address(this), 1);
+        dex.withdraw(address(0), 1);
+        assertEq(dex.getBalance(address(0), address(this)), 0);
+        uint newBalance = address(this).balance;
+        assertEq(newBalance - oldBalance, 1);
+
+        dex.depositERC20(address(dummyToken), 10);
+        vm.expectRevert(InsufficientBalance.selector);
+        dex.withdraw(address(dummyToken), 11);
+
+        oldBalance = dummyToken.balanceOf(address(this));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), 1);
+        dex.withdraw(address(dummyToken), 1);
+        assertEq(dex.getBalance(address(dummyToken), address(this)), 9);
+        newBalance = dummyToken.balanceOf(address(this));
+        assertEq(newBalance - oldBalance, 1);
+
+        oldBalance = dummyToken.balanceOf(address(this));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), 9);
+        dex.withdraw(address(dummyToken), 9);
+        assertEq(dex.getBalance(address(dummyToken), address(this)), 0);
+        newBalance = dummyToken.balanceOf(address(this));
+        assertEq(newBalance - oldBalance, 9);
+    }
+
+    function testWithdrawAll() public {
+        vm.expectRevert(InsufficientBalance.selector);
+        dex.withdrawAll(address(0));
+        
+        dex.deposit{value: 80}();
+        uint oldBalance = address(this).balance;
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(0), address(this), 80);
+        dex.withdrawAll(address(0));
+        assertEq(dex.getBalance(address(0), address(this)), 0);
+        uint newBalance = address(this).balance;
+        assertEq(newBalance - oldBalance, 80);
+        
+        dex.depositERC20(address(dummyToken), 10);
+        oldBalance = dummyToken.balanceOf(address(this));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), 10);
+        dex.withdrawAll(address(dummyToken));
+        assertEq(dex.getBalance(address(dummyToken), address(this)), 0);
+        newBalance = dummyToken.balanceOf(address(this));
+        assertEq(newBalance - oldBalance, 10);
     }
 }
