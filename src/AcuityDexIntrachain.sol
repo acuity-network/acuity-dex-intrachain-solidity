@@ -136,7 +136,7 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function removeOrder(address sellToken, address buyToken, uint96 sellPrice) external {
+    function _removeOrder(address sellToken, address buyToken, uint96 sellPrice) internal returns (uint value) {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -144,7 +144,7 @@ contract AcuityDexIntrachain {
 
         bytes32 orderId = encodeOrderId(sellPrice);
         
-        uint value = orderValue[orderId];
+        value = orderValue[orderId];
         
         if (value == 0) {
             revert OrderNotFound(sellToken, buyToken, msg.sender, sellPrice);
@@ -153,17 +153,23 @@ contract AcuityDexIntrachain {
         delete orderValue[orderId];
 
         // Find the previous sell order.
-
         bytes32 prev = 0;
-
         while (orderLL[prev] != orderId) {
             prev = orderLL[prev];
         }
-        
+        // Remove from linked list.        
         orderLL[prev] = orderLL[orderId];
         delete orderLL[orderId];
+    }
 
+    function removeOrder(address sellToken, address buyToken, uint96 sellPrice) external {
+        uint value = _removeOrder(sellToken, buyToken, sellPrice);
         accountTokenBalance[msg.sender][sellToken] += value;
+    }
+    
+    function removeOrderAndWithdraw(address sellToken, address buyToken, uint96 sellPrice) external {
+        uint value = _removeOrder(sellToken, buyToken, sellPrice);
+        safeTransferOut(sellToken, msg.sender, value);
     }
 
     function adjustOrderPrice(address sellToken, address buyToken, uint96 oldPrice, uint96 newPrice) external {
