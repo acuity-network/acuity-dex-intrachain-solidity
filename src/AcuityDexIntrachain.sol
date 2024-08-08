@@ -27,6 +27,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    event OrderAdded(address sellToken, address buyToken, address account, uint price, uint value);
+    
+    /**
+     * @dev
+     */
     error NoValue();
 
     /**
@@ -37,7 +42,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error TokensNotDifferent(address sellToken, address buyToken);
+    error TokensNotDifferent();
 
     /**
      * @dev
@@ -57,8 +62,26 @@ contract AcuityDexIntrachain {
     /**
      * @dev Revert if no value is sent.
      */
-    modifier hasValue() {
+    modifier hasMsgValue() {
         if (msg.value == 0) revert NoValue();
+        _;
+    }
+
+    /**
+     * @dev Revert if no value is sent.
+     */
+    modifier hasValue(uint value) {
+        if (value == 0) revert NoValue();
+        _;
+    }
+
+    /**
+     * @dev Check sell and buy tokens are not the same.
+     */
+    modifier tokensDifferent(address sellToken, address buyToken) {
+        if (sellToken == buyToken) {
+            revert TokensNotDifferent();
+        }
         _;
     }
 
@@ -100,7 +123,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Fallback function.
      */
-    function deposit() external payable hasValue {
+    function deposit() external payable hasMsgValue {
         // Update balance.
         accountTokenBalance[msg.sender][address(0)] += msg.value;
         // Log event.
@@ -109,7 +132,7 @@ contract AcuityDexIntrachain {
 
     // ERC1155?
 
-    function depositERC20(address token, uint value) external {
+    function depositERC20(address token, uint value) external hasValue(value) {
         // Update balance.
         accountTokenBalance[msg.sender][token] += value;
         // Transfer value.
@@ -118,7 +141,7 @@ contract AcuityDexIntrachain {
         emit Deposit(token, msg.sender, value);
     }
 
-    function withdraw(address token, uint value) external {
+    function withdraw(address token, uint value) external hasValue(value) {
         mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
         // Check there is sufficient balance.
         if (tokenBalance[token] < value) revert InsufficientBalance();
@@ -144,20 +167,19 @@ contract AcuityDexIntrachain {
         emit Withdrawal(token, msg.sender, value);
     }
 
-    function _addOrder(address sellToken, address buyToken, uint96 price, uint value) internal {
-        if (sellToken == buyToken) {
-            revert TokensNotDifferent(sellToken, buyToken);
-        }
+    function _addOrder(address sellToken, address buyToken, uint96 price, uint value) internal
+        tokensDifferent(sellToken, buyToken)
+        hasValue(value)
+    {
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
-        
         bytes32 orderId = encodeOrderId(price);
-
+        // Log event.
+        emit OrderAdded(sellToken, buyToken, msg.sender, price, value);
         // Does this order already exist?
         if (orderValue[orderId] > 0) {
             orderValue[orderId] += value;
             return;
         }
-
         // Find correct place in linked list to insert order.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         bytes32 prev = 0;
@@ -168,11 +190,9 @@ contract AcuityDexIntrachain {
             if (nextPrice > price) {
                 break;
             }
-
             prev = next;
             next = orderLL[prev];
         }
-
         // Insert into linked list.
         orderLL[prev] = orderId;
         orderLL[orderId] = next;
@@ -190,7 +210,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable hasValue {
+    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable {
         _addOrder(address(0), buyToken, sellPrice, msg.value);
     }
 
@@ -204,7 +224,10 @@ contract AcuityDexIntrachain {
         safeTransferIn(sellToken, value);
     }
 
-    function removeOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+    function removeOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external
+        tokensDifferent(sellToken, buyToken)
+        hasValue(value)
+    {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -216,7 +239,10 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function _removeOrder(address sellToken, address buyToken, uint96 sellPrice) internal returns (uint value) {
+    function _removeOrder(address sellToken, address buyToken, uint96 sellPrice) internal
+        tokensDifferent(sellToken, buyToken)
+        returns (uint value)
+    {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -252,7 +278,9 @@ contract AcuityDexIntrachain {
         safeTransferOut(sellToken, msg.sender, value);
     }
 
-    function adjustOrderPrice(address sellToken, address buyToken, uint96 oldPrice, uint96 newPrice) external {
+    function adjustOrderPrice(address sellToken, address buyToken, uint96 oldPrice, uint96 newPrice) external
+        tokensDifferent(sellToken, buyToken)
+     {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -305,7 +333,11 @@ contract AcuityDexIntrachain {
         delete orderValue[oldOrder];
     }
 
-    function _buy(address sellToken, address buyToken, uint buyValueMax) internal returns (uint buyValue, uint sellValue) {
+    function _buy(address sellToken, address buyToken, uint buyValueMax) internal
+        tokensDifferent(sellToken, buyToken)
+        hasValue(buyValueMax)
+        returns (uint buyValue, uint sellValue)
+    {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
@@ -367,7 +399,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDeposit(address sellToken) external payable hasValue {
+    function buyWithDeposit(address sellToken) external payable {
         (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
         accountTokenBalance[msg.sender][sellToken] += sellValue;
         // Send the change back.
@@ -390,7 +422,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(address sellToken) external payable hasValue {
+    function buyWithDepositAndWithdraw(address sellToken) external payable {
         (uint buyValue, uint sellValue) = _buy(sellToken, address(0), msg.value);
         // Transfer the sell tokens to the buyer.
         if (sellValue > 0) {
@@ -436,7 +468,10 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view returns (Order[] memory orderBook) {
+    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view
+        tokensDifferent(sellToken, buyToken)
+        returns (Order[] memory orderBook)
+    {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
         uint orderCount = 0;
@@ -474,7 +509,10 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function getOrderValue(address sellToken, address buyToken, address seller, uint96 price) external view returns (uint value) {
+    function getOrderValue(address sellToken, address buyToken, address seller, uint96 price) external view
+        tokensDifferent(sellToken, buyToken)
+        returns (uint value)
+    {
         bytes32 orderId = encodeOrderId(seller, price);
         value = sellBuyOrderValue[sellToken][buyToken][orderId];
     }
