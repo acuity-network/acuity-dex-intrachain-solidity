@@ -62,12 +62,12 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error TokenTransferInFailed(address token, address from, uint value);
+    error DepositFailed(address token, address from, uint value);
 
     /**
      * @dev
      */
-    error TokenTransferOutFailed(address token, address to, uint value);
+    error WithdrawalFailed(address token, address to, uint value);
 
     /**
      * @dev Revert if no value is sent.
@@ -100,7 +100,7 @@ contract AcuityDexIntrachain {
      */
     function _deposit(address token, uint value) internal {
         (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferInFailed(token, msg.sender, value);
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert DepositFailed(token, msg.sender, value);
         // Log event.
         emit Deposit(token, msg.sender, value);
     }
@@ -110,13 +110,15 @@ contract AcuityDexIntrachain {
      */
     function _withdraw(address token, uint value) internal {
         // https://docs.openzeppelin.com/contracts/3.x/api/utils#Address-sendValue-address-payable-uint256-
+        bool success;
+        bytes memory data;
         if (token == address(0)) {
-            payable(msg.sender).transfer(value); // Fix this.
+            (success, data) = msg.sender.call{value: value}(hex"");
         }
         else {
-            (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
-            if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferOutFailed(token, msg.sender, value);
+            (success, data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
         }
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert WithdrawalFailed(token, msg.sender, value);
         // Log event.
         emit Withdrawal(token, msg.sender, value);
     }

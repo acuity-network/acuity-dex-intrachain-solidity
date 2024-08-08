@@ -96,7 +96,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testDepositERC20() public {
-        bytes memory error = abi.encodeWithSelector(TokenTransferInFailed.selector, address(dummyToken), address(this), 1001);
+        bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), 1001);
         vm.expectRevert(error);
         dex.depositERC20(address(dummyToken), 1001);
 
