@@ -30,6 +30,11 @@ contract AcuityDexIntrachain {
     event OrderAdded(address sellToken, address buyToken, address account, uint price, uint value);
 
     /**
+     * @dev
+     */
+    event OrderRemoved(address sellToken, address buyToken, address account, uint price, uint value);
+
+    /**
      * @dev Sell orders have been purchased by a buyer.
      */
     event Matched(address sellToken, address buyToken, address buyer, uint buyValue, uint sellValue);
@@ -52,7 +57,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error OrderNotFound(address sellToken, address buyToken, address account, uint value);
+    error OrderNotFound();
 
     /**
      * @dev Sell orders have been purchased by a buyer.
@@ -181,17 +186,24 @@ contract AcuityDexIntrachain {
         tokensDifferent(sellToken, buyToken)
         hasValue(value)
     {
+        // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Log event.
         emit OrderAdded(sellToken, buyToken, msg.sender, price, value);
+        // Get the old order value.
+        uint oldValue = orderValue[orderId];
         // Does this order already exist?
-        if (orderValue[orderId] > 0) {
-            orderValue[orderId] += value;
+        if (oldValue > 0) {
+            orderValue[orderId] = oldValue + value;
             return;
         }
-        // Find correct place in linked list to insert order.
+        // Set the order value.
+        orderValue[orderId] = value;
+        // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        // Find correct place in linked list to insert order.
         bytes32 prev = 0;
         bytes32 next = orderLL[0];
         while (next != 0) {
@@ -206,7 +218,6 @@ contract AcuityDexIntrachain {
         // Insert into linked list.
         orderLL[prev] = orderId;
         orderLL[orderId] = next;
-        orderValue[orderId] = value;
     }
 
     /**
@@ -250,7 +261,7 @@ contract AcuityDexIntrachain {
 
         bytes32 orderId = encodeOrderId(sellPrice);
         if (orderValue[orderId] == 0) {
-            revert OrderNotFound(sellToken, buyToken, msg.sender, sellPrice);
+            revert OrderNotFound();
         }
     }
 
@@ -262,17 +273,16 @@ contract AcuityDexIntrachain {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
-
+        // Determine the orderId.
         bytes32 orderId = encodeOrderId(sellPrice);
-        
+        // Get the value of the order being removed.
         value = orderValue[orderId];
-        
+        // Check if the order exists.
         if (value == 0) {
-            revert OrderNotFound(sellToken, buyToken, msg.sender, sellPrice);
+            revert OrderNotFound();
         }
-
+        // Delete the order value.
         delete orderValue[orderId];
-
         // Find the previous sell order.
         bytes32 prev = 0;
         while (orderLL[prev] != orderId) {
@@ -281,6 +291,8 @@ contract AcuityDexIntrachain {
         // Remove from linked list.        
         orderLL[prev] = orderLL[orderId];
         delete orderLL[orderId];
+        // Log event.
+        emit OrderRemoved(sellToken, buyToken, msg.sender, sellPrice, value);
     }
 
     function removeOrder(address sellToken, address buyToken, uint96 sellPrice) external {
@@ -305,7 +317,7 @@ contract AcuityDexIntrachain {
         bytes32 newOrder = encodeOrderId(newPrice);
 
         if (orderValue[oldOrder] == 0) {
-            revert OrderNotFound(sellToken, buyToken, msg.sender, oldPrice);
+            revert OrderNotFound();
         }
 
         // Find oldPrev

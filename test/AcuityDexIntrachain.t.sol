@@ -36,6 +36,10 @@ contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
         super._addOrder(sellToken, buyToken, price, value);
     }
     
+    function _removeOrderHarness(address sellToken, address buyToken, uint96 price) external {
+        super._removeOrder(sellToken, buyToken, price);
+    }
+    
 }
 
 contract DummyToken is ERC20 {
@@ -407,5 +411,12 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         harness.addOrderWithDepositERC20(address(dummyToken), address(8), 18, 90);
         uint newBalance = dummyToken.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 90);
+    }
+    
+    function test_RemoveOrder() public {
+        vm.expectRevert(TokensNotDifferent.selector);
+        harness._removeOrderHarness(address(7), address(7), 82);
+        vm.expectRevert(OrderNotFound.selector);
+        harness._removeOrderHarness(address(7), address(8), 82);
     }
 }
