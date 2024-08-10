@@ -24,7 +24,7 @@ contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
         order = super.encodeOrderId(sellPrice);
     }
 
-    function encodeOrderIdHarness(address account, uint96 sellPrice) external view returns (bytes32 order) {
+    function encodeOrderIdHarness(address account, uint96 sellPrice) external pure returns (bytes32 order) {
         order = super.encodeOrderId(account, sellPrice);
     }
 
@@ -376,5 +376,21 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         assertEq(orderBook[7].account, address(this));
         assertEq(orderBook[7].price, 1001);
         assertEq(orderBook[7].value, 1);
+    }
+
+    function testAddOrder() public {
+        vm.expectRevert(InsufficientBalance.selector);
+        harness.addOrder(address(0), address(8), 18, 90);
+
+        harness.deposit{value: 100}();
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(0), address(8), address(this), 18, 90);
+        harness.addOrder(address(0), address(8), 18, 90);
+        assertEq(harness.getBalance(address(0), address(this)), 10);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(0), address(8), address(this), 18, 10);
+        harness.addOrder(address(0), address(8), 18, 10);
+        assertEq(harness.getBalance(address(0), address(this)), 0);
     }
 }

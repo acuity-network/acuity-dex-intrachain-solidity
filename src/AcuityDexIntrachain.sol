@@ -127,7 +127,7 @@ contract AcuityDexIntrachain {
         orderId = bytes32(bytes20(msg.sender)) | bytes32(uint(price));
     }
 
-    function encodeOrderId(address seller, uint96 price) internal view returns (bytes32 orderId) {
+    function encodeOrderId(address seller, uint96 price) internal pure returns (bytes32 orderId) {
         orderId = bytes32(bytes20(seller)) | bytes32(uint(price));
     }
 
@@ -212,9 +212,14 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order.
      */
-    function addOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
-        _addOrder(sellToken, buyToken, sellPrice, value);
-        accountTokenBalance[msg.sender][sellToken] -= value;
+    function addOrder(address sellToken, address buyToken, uint96 sellPrice, uint sellValue) external {
+        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+        // Check there is sufficient balance.
+        if (tokenBalance[sellToken] < sellValue) revert InsufficientBalance();
+        // Add order.
+        _addOrder(sellToken, buyToken, sellPrice, sellValue);
+        // Update Balance.
+        tokenBalance[sellToken] -= sellValue;
     }
 
     /**
@@ -396,9 +401,12 @@ contract AcuityDexIntrachain {
     function buy(address sellToken, address buyToken, uint buyValueMax) external {
         // Execute the buy.
         (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
+        // Check there is sufficient balance.
+        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+        if (tokenBalance[buyToken] < buyValue) revert InsufficientBalance();
         // Update buyer's balances.
-        accountTokenBalance[msg.sender][buyToken] -= buyValue;
-        accountTokenBalance[msg.sender][sellToken] += sellValue;
+        tokenBalance[buyToken] -= buyValue;
+        tokenBalance[sellToken] += sellValue;
     }
 
     /**
@@ -407,8 +415,11 @@ contract AcuityDexIntrachain {
     function buyAndWithdraw(address sellToken, address buyToken, uint buyValueMax) external {
         // Execute the buy.
         (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
+        // Check there is sufficient balance.
+        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+        if (tokenBalance[buyToken] < buyValue) revert InsufficientBalance();
         // Update buyer's buy token balance.
-        accountTokenBalance[msg.sender][buyToken] -= buyValue;
+        tokenBalance[buyToken] -= buyValue;
         // Transfer the sell tokens to the buyer.
         _withdraw(sellToken, sellValue);
     }
