@@ -399,4 +399,13 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         emit OrderAdded(address(0), address(8), address(this), 18, 90);
         harness.addOrderWithDeposit{value: 90}(address(8), 18);
     }
+
+    function testAddOrderWithDepositERC20() public {
+        uint oldBalance = dummyToken.balanceOf(address(this));
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(dummyToken), address(8), address(this), 18, 90);
+        harness.addOrderWithDepositERC20(address(dummyToken), address(8), 18, 90);
+        uint newBalance = dummyToken.balanceOf(address(this));
+        assertEq(oldBalance - newBalance, 90);
+    }
 }
