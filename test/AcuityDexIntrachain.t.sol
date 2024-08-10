@@ -5,6 +5,20 @@ import {Test, console} from "forge-std/Test.sol";
 import {AcuityDexIntrachain} from "../src/AcuityDexIntrachain.sol";
 import {ERC20} from "../src/AcuityDexIntrachain.sol";
 
+contract AccountProxy {
+
+    AcuityDexIntrachainHarness harness;
+
+    constructor (AcuityDexIntrachainHarness _harness) {
+        harness = _harness;
+    }
+
+    function _addOrderHarness(address sellToken, address buyToken, uint96 price, uint value) external {
+        harness._addOrderHarness(sellToken, buyToken, price, value);
+    }
+    
+}
+
 contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
     function encodeOrderIdHarness(uint96 sellPrice) external view returns (bytes32 order) {
         order = super.encodeOrderId(sellPrice);
@@ -16,6 +30,10 @@ contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
 
     function decodeOrderIdHarness(bytes32 order) external pure returns (address account, uint96 sellPrice) {
         (account, sellPrice) = super.decodeOrderId(order);
+    }
+    
+    function _addOrderHarness(address sellToken, address buyToken, uint96 price, uint value) external {
+        super._addOrder(sellToken, buyToken, price, value);
     }
     
 }
@@ -52,125 +70,311 @@ contract DummyToken is ERC20 {
 }
 
 contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
-    AcuityDexIntrachain public dex;
-    AcuityDexIntrachainHarness public dexHarness;
+    AcuityDexIntrachainHarness public harness;
     DummyToken dummyToken;
+    AccountProxy account0;
+    AccountProxy account1;
+    AccountProxy account2;
+    AccountProxy account3;
 
     receive() external payable {}
 
     function setUp() public {
-        dex = new AcuityDexIntrachain();
-        dexHarness = new AcuityDexIntrachainHarness();
-        address[] memory accounts = new address[](1);
+        harness = new AcuityDexIntrachainHarness();
+        account0 = new AccountProxy(harness);
+        account1 = new AccountProxy(harness);
+        account2 = new AccountProxy(harness);
+        account3 = new AccountProxy(harness);
+
+        address[] memory accounts = new address[](5);
         accounts[0] = address(this);
+        accounts[1] = address(account0);
+        accounts[2] = address(account1);
+        accounts[3] = address(account2);
+        accounts[4] = address(account3);
         dummyToken = new DummyToken(accounts);
     }
 
     function testEncodeDecodeOrderId() public view {
-        bytes32 orderId = dexHarness.encodeOrderIdHarness(1234);
+        bytes32 orderId = harness.encodeOrderIdHarness(1234);
         console.logBytes32(orderId);
-        (address account, uint96 price) = dexHarness.decodeOrderIdHarness(orderId);
+        (address account, uint96 price) = harness.decodeOrderIdHarness(orderId);
         assertEq(account, address(this));
         assertEq(price, 1234);
 
-        orderId = dexHarness.encodeOrderIdHarness(address(7), 5678);
+        orderId = harness.encodeOrderIdHarness(address(7), 5678);
         console.logBytes32(orderId);
-        (account, price) = dexHarness.decodeOrderIdHarness(orderId);
+        (account, price) = harness.decodeOrderIdHarness(orderId);
         assertEq(account, address(7));
         assertEq(price, 5678);
     }
 
     function testDeposit() public {
         vm.expectRevert(NoValue.selector);
-        dex.deposit();
+        harness.deposit();
 
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(0), address(this), 1);
-        dex.deposit{value: 1}();
-        assertEq(dex.getBalance(address(0), address(this)), 1);
+        harness.deposit{value: 1}();
+        assertEq(harness.getBalance(address(0), address(this)), 1);
 
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(0), address(this), 12345);
-        dex.deposit{value: 12345}();
-        assertEq(dex.getBalance(address(0), address(this)), 12346);
+        harness.deposit{value: 12345}();
+        assertEq(harness.getBalance(address(0), address(this)), 12346);
     }
 
     function testDepositERC20() public {
         bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), 1001);
         vm.expectRevert(error);
-        dex.depositERC20(address(dummyToken), 1001);
+        harness.depositERC20(address(dummyToken), 1001);
 
         uint oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(dummyToken), address(this), 10);
-        dex.depositERC20(address(dummyToken), 10);
-        assertEq(dex.getBalance(address(dummyToken), address(this)), 10);
+        harness.depositERC20(address(dummyToken), 10);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 10);
         uint newBalance = dummyToken.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 10);
 
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Deposit(address(dummyToken), address(this), 20);
-        dex.depositERC20(address(dummyToken), 20);
-        assertEq(dex.getBalance(address(dummyToken), address(this)), 30);
+        harness.depositERC20(address(dummyToken), 20);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 30);
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 20);
     }
 
     function testWithdraw() public {
-        dex.deposit{value: 1}();
+        harness.deposit{value: 1}();
         vm.expectRevert(InsufficientBalance.selector);
-        dex.withdraw(address(0), 2);
+        harness.withdraw(address(0), 2);
         
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(0), address(this), 1);
-        dex.withdraw(address(0), 1);
-        assertEq(dex.getBalance(address(0), address(this)), 0);
+        harness.withdraw(address(0), 1);
+        assertEq(harness.getBalance(address(0), address(this)), 0);
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 1);
 
-        dex.depositERC20(address(dummyToken), 10);
+        harness.depositERC20(address(dummyToken), 10);
         vm.expectRevert(InsufficientBalance.selector);
-        dex.withdraw(address(dummyToken), 11);
+        harness.withdraw(address(dummyToken), 11);
 
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(dummyToken), address(this), 1);
-        dex.withdraw(address(dummyToken), 1);
-        assertEq(dex.getBalance(address(dummyToken), address(this)), 9);
+        harness.withdraw(address(dummyToken), 1);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 9);
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 1);
 
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(dummyToken), address(this), 9);
-        dex.withdraw(address(dummyToken), 9);
-        assertEq(dex.getBalance(address(dummyToken), address(this)), 0);
+        harness.withdraw(address(dummyToken), 9);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 9);
     }
 
     function testWithdrawAll() public {
         vm.expectRevert(InsufficientBalance.selector);
-        dex.withdrawAll(address(0));
+        harness.withdrawAll(address(0));
         
-        dex.deposit{value: 80}();
+        harness.deposit{value: 80}();
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(0), address(this), 80);
-        dex.withdrawAll(address(0));
-        assertEq(dex.getBalance(address(0), address(this)), 0);
+        harness.withdrawAll(address(0));
+        assertEq(harness.getBalance(address(0), address(this)), 0);
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 80);
         
-        dex.depositERC20(address(dummyToken), 10);
+        harness.depositERC20(address(dummyToken), 10);
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(dummyToken), address(this), 10);
-        dex.withdrawAll(address(dummyToken));
-        assertEq(dex.getBalance(address(dummyToken), address(this)), 0);
+        harness.withdrawAll(address(dummyToken));
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 10);
+    }
+
+    function test_AddOrder() public {
+        vm.expectRevert(TokensNotDifferent.selector);
+        harness._addOrderHarness(address(7), address(7), 82, 90);
+        vm.expectRevert(NoValue.selector);
+        harness._addOrderHarness(address(7), address(8), 82, 0);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 82, 90);
+        harness._addOrderHarness(address(7), address(8), 82, 90);
+        Order[] memory orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 1);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 82);
+        assertEq(orderBook[0].value, 90);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 18, 90);
+        harness._addOrderHarness(address(7), address(8), 18, 90);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 2);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 18);
+        assertEq(orderBook[0].value, 90);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 82);
+        assertEq(orderBook[1].value, 90);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 18, 90);
+        harness._addOrderHarness(address(7), address(8), 18, 90);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 2);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 18);
+        assertEq(orderBook[0].value, 180);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 82);
+        assertEq(orderBook[1].value, 90);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 17, 60);
+        harness._addOrderHarness(address(7), address(8), 17, 60);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 3);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 82);
+        assertEq(orderBook[2].value, 90);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 19, 61);
+        harness._addOrderHarness(address(7), address(8), 19, 61);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 4);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 19);
+        assertEq(orderBook[2].value, 61);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 82);
+        assertEq(orderBook[3].value, 90);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 1000, 1);
+        harness._addOrderHarness(address(7), address(8), 1000, 1);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 5);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 19);
+        assertEq(orderBook[2].value, 61);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 82);
+        assertEq(orderBook[3].value, 90);
+        assertEq(orderBook[4].account, address(this));
+        assertEq(orderBook[4].price, 1000);
+        assertEq(orderBook[4].value, 1);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 999, 1);
+        harness._addOrderHarness(address(7), address(8), 999, 1);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 6);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 19);
+        assertEq(orderBook[2].value, 61);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 82);
+        assertEq(orderBook[3].value, 90);
+        assertEq(orderBook[4].account, address(this));
+        assertEq(orderBook[4].price, 999);
+        assertEq(orderBook[4].value, 1);
+        assertEq(orderBook[5].account, address(this));
+        assertEq(orderBook[5].price, 1000);
+        assertEq(orderBook[5].value, 1);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(this), 1001, 1);
+        harness._addOrderHarness(address(7), address(8), 1001, 1);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 7);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 19);
+        assertEq(orderBook[2].value, 61);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 82);
+        assertEq(orderBook[3].value, 90);
+        assertEq(orderBook[4].account, address(this));
+        assertEq(orderBook[4].price, 999);
+        assertEq(orderBook[4].value, 1);
+        assertEq(orderBook[5].account, address(this));
+        assertEq(orderBook[5].price, 1000);
+        assertEq(orderBook[5].value, 1);
+        assertEq(orderBook[6].account, address(this));
+        assertEq(orderBook[6].price, 1001);
+        assertEq(orderBook[6].value, 1);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(7), address(8), address(account0), 18, 90);
+        account0._addOrderHarness(address(7), address(8), 18, 90);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 8);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 60);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 180);
+        assertEq(orderBook[2].account, address(account0));
+        assertEq(orderBook[2].price, 18);
+        assertEq(orderBook[2].value, 90);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 19);
+        assertEq(orderBook[3].value, 61);
+        assertEq(orderBook[4].account, address(this));
+        assertEq(orderBook[4].price, 82);
+        assertEq(orderBook[4].value, 90);
+        assertEq(orderBook[5].account, address(this));
+        assertEq(orderBook[5].price, 999);
+        assertEq(orderBook[5].value, 1);
+        assertEq(orderBook[6].account, address(this));
+        assertEq(orderBook[6].price, 1000);
+        assertEq(orderBook[6].value, 1);
+        assertEq(orderBook[7].account, address(this));
+        assertEq(orderBook[7].price, 1001);
+        assertEq(orderBook[7].value, 1);
     }
 }
