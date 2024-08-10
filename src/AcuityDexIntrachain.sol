@@ -137,7 +137,7 @@ contract AcuityDexIntrachain {
     }
 
     /**
-     * @dev Fallback function.
+     * @dev Deposit base coin.
      */
     function deposit() external payable hasMsgValue {
         // Log event.

@@ -393,4 +393,10 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         harness.addOrder(address(0), address(8), 18, 10);
         assertEq(harness.getBalance(address(0), address(this)), 0);
     }
+
+    function testAddOrderWithDeposit() public {
+        vm.expectEmit(false, false, false, true);
+        emit OrderAdded(address(0), address(8), address(this), 18, 90);
+        harness.addOrderWithDeposit{value: 90}(address(8), 18);
+    }
 }
