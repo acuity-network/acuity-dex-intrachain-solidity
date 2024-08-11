@@ -515,4 +515,15 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 0);
     }
+
+    function testRemoveOrder() public {
+        harness.addOrderWithDeposit{value: 90}(address(8), 18);
+
+        uint oldBalance = harness.getBalance(address(0), address(this));
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 18, 90);
+        harness.removeOrder(address(0), address(8), 18);
+        uint newBalance = harness.getBalance(address(0), address(this));
+        assertEq(newBalance - oldBalance, 90);
+    }
 }
