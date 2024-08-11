@@ -418,5 +418,101 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         harness._removeOrderHarness(address(7), address(7), 82);
         vm.expectRevert(OrderNotFound.selector);
         harness._removeOrderHarness(address(7), address(8), 82);
+
+        harness.addOrderWithDeposit{value: 90}(address(8), 18);
+        Order[] memory orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 1);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 18);
+        assertEq(orderBook[0].value, 90);
+        
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 18, 90);
+        harness._removeOrderHarness(address(0), address(8), 18);
+        orderBook = harness.getOrderBook(address(7), address(8), 0);
+        assertEq(orderBook.length, 0);
+
+        harness.addOrderWithDeposit{value: 90}(address(8), 18);
+        harness.addOrderWithDeposit{value: 91}(address(8), 17);
+        harness.addOrderWithDeposit{value: 94}(address(8), 16);
+        harness.addOrderWithDeposit{value: 93}(address(8), 180972);
+        harness.addOrderWithDeposit{value: 946}(address(8), 180973);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 5);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 16);
+        assertEq(orderBook[0].value, 94);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 17);
+        assertEq(orderBook[1].value, 91);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 18);
+        assertEq(orderBook[2].value, 90);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 180972);
+        assertEq(orderBook[3].value, 93);
+        assertEq(orderBook[4].account, address(this));
+        assertEq(orderBook[4].price, 180973);
+        assertEq(orderBook[4].value, 946);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 16, 94);
+        harness._removeOrderHarness(address(0), address(8), 16);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 4);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 91);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 18);
+        assertEq(orderBook[1].value, 90);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 180972);
+        assertEq(orderBook[2].value, 93);
+        assertEq(orderBook[3].account, address(this));
+        assertEq(orderBook[3].price, 180973);
+        assertEq(orderBook[3].value, 946);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 18, 90);
+        harness._removeOrderHarness(address(0), address(8), 18);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 3);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 91);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 180972);
+        assertEq(orderBook[1].value, 93);
+        assertEq(orderBook[2].account, address(this));
+        assertEq(orderBook[2].price, 180973);
+        assertEq(orderBook[2].value, 946);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 180973, 946);
+        harness._removeOrderHarness(address(0), address(8), 180973);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 2);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 91);
+        assertEq(orderBook[1].account, address(this));
+        assertEq(orderBook[1].price, 180972);
+        assertEq(orderBook[1].value, 93);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 180972, 93);
+        harness._removeOrderHarness(address(0), address(8), 180972);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 1);
+        assertEq(orderBook[0].account, address(this));
+        assertEq(orderBook[0].price, 17);
+        assertEq(orderBook[0].value, 91);
+
+        vm.expectEmit(false, false, false, true);
+        emit OrderRemoved(address(0), address(8), address(this), 17, 91);
+        harness._removeOrderHarness(address(0), address(8), 17);
+        orderBook = harness.getOrderBook(address(0), address(8), 0);
+        assertEq(orderBook.length, 0);
     }
 }
