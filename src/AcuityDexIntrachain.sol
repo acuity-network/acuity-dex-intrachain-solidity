@@ -8,7 +8,7 @@ contract AcuityDexIntrachain {
     mapping (address => mapping (address => uint)) accountAssetBalance;
     
     /**
-     * @dev Mapping of selling ERC20 contract address to buying ERC20 contract address to linked list of sell orders, starting with the lowest selling price.
+     * @dev Mapping of selling asset address to buying asset address to linked list of sell orders, starting with the lowest selling price.
      */
     mapping (address => mapping (address => mapping (bytes32 => bytes32))) sellBuyOrderLL;
 
@@ -129,7 +129,8 @@ contract AcuityDexIntrachain {
         notBaseAsset(asset)
     {
         (bool success, bytes memory data) = asset.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert DepositFailed(asset, msg.sender, value);
+        if (success && data.length != 0) success = abi.decode(data, (bool));
+        if (!success) revert DepositFailed(asset, msg.sender, value);
         // Log event.
         emit Deposit(asset, msg.sender, value);
     }
@@ -137,13 +138,13 @@ contract AcuityDexIntrachain {
     function _withdrawBase(uint value) internal returns (bool success) {
         bytes memory data;
         (success, data) = msg.sender.call{value: value}(hex"");
-        if (success && (data.length != 0 && !abi.decode(data, (bool)))) success = false;
+        if (success && data.length != 0) success = abi.decode(data, (bool));
     }
 
     function _withdrawERC20(address asset, uint value) internal returns (bool success) {
         bytes memory data;
         (success, data) = asset.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
-        if (success && (data.length != 0 && !abi.decode(data, (bool)))) success = false;
+        if (success && data.length != 0) success = abi.decode(data, (bool));
     }
 
     /**
@@ -343,6 +344,7 @@ contract AcuityDexIntrachain {
         }
         // Is the whole order being deleted?
         if (partialValue >= value) {
+            partialValue = value;
             // Delete the order value.
             delete orderValue[orderId];
             // _deleteOrderLL()
