@@ -5,7 +5,7 @@ import "./ERC20.sol";
 
 contract AcuityDexIntrachain {
 
-    mapping (address => mapping (address => uint)) accountTokenBalance;
+    mapping (address => mapping (address => uint)) accountAssetBalance;
     
     /**
      * @dev Mapping of selling ERC20 contract address to buying ERC20 contract address to linked list of sell orders, starting with the lowest selling price.
@@ -17,28 +17,33 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    event Deposit(address token, address account, uint value);
+    event Deposit(address asset, address account, uint value);
 
     /**
      * @dev
      */
-    event Withdrawal(address token, address account, uint value);
+    event Withdrawal(address asset, address account, uint value);
     
     /**
      * @dev
      */
-    event OrderAdded(address sellToken, address buyToken, address account, uint price, uint value);
+    event OrderAdded(address sellAsset, address buyAsset, address account, uint price, uint value);
 
     /**
      * @dev
      */
-    event OrderRemoved(address sellToken, address buyToken, address account, uint price, uint value);
+    event OrderRemoved(address sellAsset, address buyAsset, address account, uint price, uint value);
 
     /**
      * @dev Sell orders have been purchased by a buyer.
      */
-    event Matched(address sellToken, address buyToken, address buyer, uint buyValue, uint sellValue);
+    event Matched(address sellAsset, address buyAsset, address buyer, uint buyValue, uint sellValue);
     
+    /**
+     * @dev
+     */
+    error InvalidAsset();
+
     /**
      * @dev
      */
@@ -52,7 +57,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error TokensNotDifferent();
+    error AssetsNotDifferent();
 
     /**
      * @dev
@@ -62,17 +67,33 @@ contract AcuityDexIntrachain {
     /**
      * @dev Sell orders have been purchased by a buyer.
      */
-    error NoMatch(address sellToken, address buyToken, address buyer, uint buyValueMax);
+    error NoMatch(address sellAsset, address buyAsset, address buyer, uint buyValueMax);
 
     /**
      * @dev
      */
-    error DepositFailed(address token, address from, uint value);
+    error DepositFailed(address asset, address from, uint value);
 
     /**
      * @dev
      */
-    error WithdrawalFailed(address token, address to, uint value);
+    error WithdrawalFailed(address asset, address to, uint value);
+
+    /**
+     * @dev
+     */
+    modifier validAsset(address asset) {
+        if (asset == msg.sender || asset == address(this)) revert InvalidAsset();
+        _;
+    }
+
+    /**
+     * @dev
+     */
+    modifier notBaseAsset(address asset) {
+        if (asset == address(0)) revert InvalidAsset();
+        _;
+    }
 
     /**
      * @dev Revert if no value is sent.
@@ -91,11 +112,11 @@ contract AcuityDexIntrachain {
     }
 
     /**
-     * @dev Check sell and buy tokens are not the same.
+     * @dev Check sell and buy assets are not the same.
      */
-    modifier tokensDifferent(address sellToken, address buyToken) {
-        if (sellToken == buyToken) {
-            revert TokensNotDifferent();
+    modifier assetsDifferent(address sellAsset, address buyAsset) {
+        if (sellAsset == buyAsset) {
+            revert AssetsNotDifferent();
         }
         _;
     }
@@ -103,29 +124,45 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function _deposit(address token, uint value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert DepositFailed(token, msg.sender, value);
+    function _depositERC20(address asset, uint value) internal
+        validAsset(asset)
+        notBaseAsset(asset)
+    {
+        (bool success, bytes memory data) = asset.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
+        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert DepositFailed(asset, msg.sender, value);
         // Log event.
-        emit Deposit(token, msg.sender, value);
+        emit Deposit(asset, msg.sender, value);
+    }
+
+    function _withdrawBase(uint value) internal returns (bool success) {
+        bytes memory data;
+        (success, data) = msg.sender.call{value: value}(hex"");
+        if (success && (data.length != 0 && !abi.decode(data, (bool)))) success = false;
+    }
+
+    function _withdrawERC20(address asset, uint value) internal returns (bool success) {
+        bytes memory data;
+        (success, data) = asset.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
+        if (success && (data.length != 0 && !abi.decode(data, (bool)))) success = false;
     }
 
     /**
      * @dev
      */
-    function _withdraw(address token, uint value) internal {
+    function _withdraw(address asset, uint value) internal
+        validAsset(asset)
+    {
         // https://docs.openzeppelin.com/contracts/3.x/api/utils#Address-sendValue-address-payable-uint256-
         bool success;
-        bytes memory data;
-        if (token == address(0)) {
-            (success, data) = msg.sender.call{value: value}(hex"");
+        if (asset == address(0)) {
+            success = _withdrawBase(value);
         }
         else {
-            (success, data) = token.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
+            success = _withdrawERC20(asset, value);
         }
-        if (!success || (data.length != 0 && !abi.decode(data, (bool)))) revert WithdrawalFailed(token, msg.sender, value);
+        if (!success) revert WithdrawalFailed(asset, msg.sender, value);
         // Log event.
-        emit Withdrawal(token, msg.sender, value);
+        emit Withdrawal(asset, msg.sender, value);
     }
 
     function encodeOrderId(uint96 price) internal view returns (bytes32 orderId) {
@@ -148,50 +185,50 @@ contract AcuityDexIntrachain {
         // Log event.
         emit Deposit(address(0), msg.sender, msg.value);
         // Update balance.
-        accountTokenBalance[msg.sender][address(0)] += msg.value;
+        accountAssetBalance[msg.sender][address(0)] += msg.value;
     }
 
     // ERC1155?
 
-    function depositERC20(address token, uint value) external hasValue(value) {
+    function depositERC20(address asset, uint value) external hasValue(value) {
         // Update balance.
-        accountTokenBalance[msg.sender][token] += value;
+        accountAssetBalance[msg.sender][asset] += value;
         // Transfer value.
-        _deposit(token, value);
+        _depositERC20(asset, value);
     }
 
-    function withdraw(address token, uint value) external hasValue(value) {
-        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+    function withdraw(address asset, uint value) external hasValue(value) {
+        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
-        if (tokenBalance[token] < value) revert InsufficientBalance();
+        if (assetBalance[asset] < value) revert InsufficientBalance();
         // Update balance.
-        accountTokenBalance[msg.sender][token] -= value;
+        accountAssetBalance[msg.sender][asset] -= value;
         // Transfer value.
-        _withdraw(token, value);
+        _withdraw(asset, value);
     }
 
-    function withdrawAll(address token) external {
-        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
-        // Get token balance.
-        uint value = tokenBalance[token];
+    function withdrawAll(address asset) external {
+        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
+        // Get asset balance.
+        uint value = assetBalance[asset];
         // Check there is a balance.
         if (value == 0) revert InsufficientBalance();
-        // Delete token balance.
-        delete tokenBalance[token];
+        // Delete asset balance.
+        delete assetBalance[asset];
         // Transfer value.
-        _withdraw(token, value);
+        _withdraw(asset, value);
     }
 
-    function _addOrder(address sellToken, address buyToken, uint96 price, uint value) internal
-        tokensDifferent(sellToken, buyToken)
+    function _addOrder(address sellAsset, address buyAsset, uint96 price, uint value) internal
+        assetsDifferent(sellAsset, buyAsset)
         hasValue(value)
     {
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Log event.
-        emit OrderAdded(sellToken, buyToken, msg.sender, price, value);
+        emit OrderAdded(sellAsset, buyAsset, msg.sender, price, value);
         // Get the old order value.
         uint oldValue = orderValue[orderId];
         // Does this order already exist?
@@ -202,7 +239,7 @@ contract AcuityDexIntrachain {
         // Set the order value.
         orderValue[orderId] = value;
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Find correct place in linked list to insert order.
         bytes32 prev = 0;
         bytes32 next = orderLL[0];
@@ -223,56 +260,41 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order.
      */
-    function addOrder(address sellToken, address buyToken, uint96 sellPrice, uint sellValue) external {
-        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
+    function addOrder(address sellAsset, address buyAsset, uint96 sellPrice, uint sellValue) external {
+        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
-        if (tokenBalance[sellToken] < sellValue) revert InsufficientBalance();
+        if (assetBalance[sellAsset] < sellValue) revert InsufficientBalance();
         // Add order.
-        _addOrder(sellToken, buyToken, sellPrice, sellValue);
+        _addOrder(sellAsset, buyAsset, sellPrice, sellValue);
         // Update Balance.
-        tokenBalance[sellToken] -= sellValue;
+        assetBalance[sellAsset] -= sellValue;
     }
 
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderWithDeposit(address buyToken, uint96 sellPrice) external payable {
-        _addOrder(address(0), buyToken, sellPrice, msg.value);
+    function addOrderWithDeposit(address buyAsset, uint96 sellPrice) external payable {
+        _addOrder(address(0), buyAsset, sellPrice, msg.value);
     }
 
     /**
-     * @dev Add sell order of ERC20 token.
+     * @dev Add sell order of ERC20 asset.
      */
-    function addOrderWithDepositERC20(address sellToken, address buyToken, uint96 sellPrice, uint value) external {
+    function addOrderWithDepositERC20(address sellAsset, address buyAsset, uint96 sellPrice, uint value) external {
         // Add the sell order.
-        _addOrder(sellToken, buyToken, sellPrice, value);
-        // Transfer the tokens from the seller to this contract.
-        _deposit(sellToken, value);
+        _addOrder(sellAsset, buyAsset, sellPrice, value);
+        // Transfer the assets from the seller to this contract.
+        _depositERC20(sellAsset, value);
     }
 
-    function removeOrder(address sellToken, address buyToken, uint96 sellPrice, uint value) external
-        tokensDifferent(sellToken, buyToken)
-        hasValue(value)
-    {
-        // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
-        // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
-
-        bytes32 orderId = encodeOrderId(sellPrice);
-        if (orderValue[orderId] == 0) {
-            revert OrderNotFound();
-        }
-    }
-
-    function _removeOrder(address sellToken, address buyToken, uint96 sellPrice) internal
-        tokensDifferent(sellToken, buyToken)
+    function _removeOrder(address sellAsset, address buyAsset, uint96 sellPrice) internal
+        assetsDifferent(sellAsset, buyAsset)
         returns (uint value)
     {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(sellPrice);
         // Get the value of the order being removed.
@@ -292,26 +314,53 @@ contract AcuityDexIntrachain {
         orderLL[prev] = orderLL[orderId];
         delete orderLL[orderId];
         // Log event.
-        emit OrderRemoved(sellToken, buyToken, msg.sender, sellPrice, value);
+        emit OrderRemoved(sellAsset, buyAsset, msg.sender, sellPrice, value);
     }
 
-    function removeOrder(address sellToken, address buyToken, uint96 sellPrice) external {
-        uint value = _removeOrder(sellToken, buyToken, sellPrice);
-        accountTokenBalance[msg.sender][sellToken] += value;
+    function removeOrder(address sellAsset, address buyAsset, uint96 sellPrice) external {
+        uint value = _removeOrder(sellAsset, buyAsset, sellPrice);
+        accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderAndWithdraw(address sellToken, address buyToken, uint96 sellPrice) external {
-        uint value = _removeOrder(sellToken, buyToken, sellPrice);
-        _withdraw(sellToken, value);
+    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 sellPrice) external {
+        uint value = _removeOrder(sellAsset, buyAsset, sellPrice);
+        _withdraw(sellAsset, value);
     }
 
-    function adjustOrderPrice(address sellToken, address buyToken, uint96 oldPrice, uint96 newPrice) external
-        tokensDifferent(sellToken, buyToken)
+    function _removeOrderPartial(address sellAsset, address buyAsset, uint96 sellPrice, uint partialValue) internal
+        assetsDifferent(sellAsset, buyAsset)
+        hasValue(partialValue)
+    {
+        // Determine the orderId.
+        bytes32 orderId = encodeOrderId(sellPrice);
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        // Get the value of the order being removed.
+        uint value = orderValue[orderId];
+        // Check if the order exists.
+        if (value == 0) {
+            revert OrderNotFound();
+        }
+        // Is the whole order being deleted?
+        if (partialValue >= value) {
+            // Delete the order value.
+            delete orderValue[orderId];
+            // _deleteOrderLL()
+        }
+        else {
+            orderValue[orderId] = value - partialValue;
+        }
+        // Log event.
+        emit OrderRemoved(sellAsset, buyAsset, msg.sender, sellPrice, partialValue);
+    }
+
+    function adjustOrderPrice(address sellAsset, address buyAsset, uint96 oldPrice, uint96 newPrice) external
+        assetsDifferent(sellAsset, buyAsset)
      {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
 
         bytes32 oldOrder = encodeOrderId(oldPrice);
         bytes32 newOrder = encodeOrderId(newPrice);
@@ -360,14 +409,14 @@ contract AcuityDexIntrachain {
         delete orderValue[oldOrder];
     }
 
-    function _match(address sellToken, address buyToken, uint buyValueMax) internal
-        tokensDifferent(sellToken, buyToken)
+    function _match(address sellAsset, address buyAsset, uint buyValueMax) internal
+        assetsDifferent(sellAsset, buyAsset)
         returns (uint sellValue, uint buyValue)
     {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Get the lowest sell order.
         bytes32 order = orderLL[0];
         while (order != 0) {
@@ -380,7 +429,7 @@ contract AcuityDexIntrachain {
                 orderValue[order] -= matchedSellValue;
                 // Transfer value.
                 buyValue += buyValueMax;
-                accountTokenBalance[sellAccount][buyToken] += buyValueMax;
+                accountAssetBalance[sellAccount][buyAsset] += buyValueMax;
                 sellValue += matchedSellValue;
                 break;
             }
@@ -396,107 +445,107 @@ contract AcuityDexIntrachain {
                 order = next;
                 // Transfer value.
                 buyValue += matchedBuyValue;
-                accountTokenBalance[sellAccount][buyToken] += matchedBuyValue;
+                accountAssetBalance[sellAccount][buyAsset] += matchedBuyValue;
                 sellValue += orderSellValue;
             }
         }
         if (sellValue == 0 || buyValue == 0) {
-            revert NoMatch(sellToken, buyToken, msg.sender, buyValueMax);
+            revert NoMatch(sellAsset, buyAsset, msg.sender, buyValueMax);
         }
         // Log the event.
-        emit Matched(sellToken, buyToken, msg.sender, sellValue, buyValue);
+        emit Matched(sellAsset, buyAsset, msg.sender, sellValue, buyValue);
     }
 
     /**
      * @dev Buy.
      */
-    function buy(address sellToken, address buyToken, uint buyValueMax) external {
+    function buy(address sellAsset, address buyAsset, uint buyValueMax) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
+        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueMax);
         // Check there is sufficient balance.
-        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
-        if (tokenBalance[buyToken] < buyValue) revert InsufficientBalance();
+        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
+        if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
         // Update buyer's balances.
-        tokenBalance[buyToken] -= buyValue;
-        tokenBalance[sellToken] += sellValue;
+        assetBalance[buyAsset] -= buyValue;
+        assetBalance[sellAsset] += sellValue;
     }
 
     /**
      * @dev Buy with balance and withdraw.
      */
-    function buyAndWithdraw(address sellToken, address buyToken, uint buyValueMax) external {
+    function buyAndWithdraw(address sellAsset, address buyAsset, uint buyValueMax) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
+        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueMax);
         // Check there is sufficient balance.
-        mapping(address => uint256) storage tokenBalance = accountTokenBalance[msg.sender];
-        if (tokenBalance[buyToken] < buyValue) revert InsufficientBalance();
-        // Update buyer's buy token balance.
-        tokenBalance[buyToken] -= buyValue;
-        // Transfer the sell tokens to the buyer.
-        _withdraw(sellToken, sellValue);
+        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
+        if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
+        // Update buyer's buy asset balance.
+        assetBalance[buyAsset] -= buyValue;
+        // Transfer the sell assets to the buyer.
+        _withdraw(sellAsset, sellValue);
     }
     
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDeposit(address sellToken) external payable {
+    function buyWithDeposit(address sellAsset) external payable {
         // Log deposit.
         emit Deposit(address(0), msg.sender, msg.value);
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, address(0), msg.value);
+        (uint sellValue, uint buyValue) = _match(sellAsset, address(0), msg.value);
         // Credit the buyer with their change.
         if (buyValue < msg.value) {
-            accountTokenBalance[msg.sender][address(0)] += msg.value - buyValue;
+            accountAssetBalance[msg.sender][address(0)] += msg.value - buyValue;
         }
-        // Update buyer's sell token balance.
-        accountTokenBalance[msg.sender][sellToken] += sellValue;
+        // Update buyer's sell asset balance.
+        accountAssetBalance[msg.sender][sellAsset] += sellValue;
     }
 
     /**
-     * @dev Buy with ERC20 token.
+     * @dev Buy with ERC20 asset.
      */
-    function buyWithDepositERC20(address sellToken, address buyToken, uint buyValueMax) external {
+    function buyWithDepositERC20(address sellAsset, address buyAsset, uint buyValueMax) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
-        // Transfer the buy tokens from the buyer to this contract.
-        _deposit(buyToken, buyValue);
-        // Update buyer's sell token balance.
-        accountTokenBalance[msg.sender][sellToken] += sellValue;
+        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueMax);
+        // Transfer the buy assets from the buyer to this contract.
+        _depositERC20(buyAsset, buyValue);
+        // Update buyer's sell asset balance.
+        accountAssetBalance[msg.sender][sellAsset] += sellValue;
     }
 
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(address sellToken) external payable {
+    function buyWithDepositAndWithdraw(address sellAsset) external payable {
         // Log deposit.
         emit Deposit(address(0), msg.sender, msg.value);
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, address(0), msg.value);
+        (uint sellValue, uint buyValue) = _match(sellAsset, address(0), msg.value);
         // Send the buyer's change back.
         if (buyValue < msg.value) {
             _withdraw(address(0), msg.value - buyValue);
         }
-        // Transfer the sell tokens to the buyer.
-        _withdraw(sellToken, sellValue);
+        // Transfer the sell assets to the buyer.
+        _withdraw(sellAsset, sellValue);
     }
 
     /**
-     * @dev Buy with ERC20 token.
+     * @dev Buy with ERC20 asset.
      */
-    function buyWithDepositERC20AndWithdraw(address sellToken, address buyToken, uint buyValueMax) external {
+    function buyWithDepositERC20AndWithdraw(address sellAsset, address buyAsset, uint buyValueMax) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellToken, buyToken, buyValueMax);
-        // Transfer the buy tokens from the buyer to this contract.
-        _deposit(buyToken, buyValue);
-        // Transfer the sell tokens to the buyer.
-        _withdraw(sellToken, sellValue);
+        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueMax);
+        // Transfer the buy assets from the buyer to this contract.
+        _depositERC20(buyAsset, buyValue);
+        // Transfer the sell assets to the buyer.
+        _withdraw(sellAsset, sellValue);
     }
 
     /**
-     * @dev Get balance of token for account.
+     * @dev Get balance of asset for account.
      */
-    function getBalance(address token, address account) external view returns (uint value) {
-        value = accountTokenBalance[account][token];
+    function getBalance(address asset, address account) external view returns (uint value) {
+        value = accountAssetBalance[account][asset];
     }
 
     /**
@@ -512,12 +561,12 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function getOrderBook(address sellToken, address buyToken, uint maxOrders) external view
-        tokensDifferent(sellToken, buyToken)
+    function getOrderBook(address sellAsset, address buyAsset, uint maxOrders) external view
+        assetsDifferent(sellAsset, buyAsset)
         returns (Order[] memory orderBook)
     {
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellToken][buyToken];
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellToken][buyToken];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         uint orderCount = 0;
         
         bytes32 orderId = orderLL[0];
@@ -553,11 +602,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function getOrderValue(address sellToken, address buyToken, address seller, uint96 price) external view
-        tokensDifferent(sellToken, buyToken)
+    function getOrderValue(address sellAsset, address buyAsset, address seller, uint96 price) external view
+        assetsDifferent(sellAsset, buyAsset)
         returns (uint value)
     {
         bytes32 orderId = encodeOrderId(seller, price);
-        value = sellBuyOrderValue[sellToken][buyToken][orderId];
+        value = sellBuyOrderValue[sellAsset][buyAsset][orderId];
     }
 }

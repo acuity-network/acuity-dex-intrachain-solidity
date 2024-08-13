@@ -13,8 +13,8 @@ contract AccountProxy {
         harness = _harness;
     }
 
-    function _addOrderHarness(address sellToken, address buyToken, uint96 price, uint value) external {
-        harness._addOrderHarness(sellToken, buyToken, price, value);
+    function _addOrderHarness(address sellAsset, address buyAsset, uint96 price, uint value) external {
+        harness._addOrderHarness(sellAsset, buyAsset, price, value);
     }
     
 }
@@ -32,17 +32,17 @@ contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
         (account, sellPrice) = super.decodeOrderId(order);
     }
     
-    function _addOrderHarness(address sellToken, address buyToken, uint96 price, uint value) external {
-        super._addOrder(sellToken, buyToken, price, value);
+    function _addOrderHarness(address sellAsset, address buyAsset, uint96 price, uint value) external {
+        super._addOrder(sellAsset, buyAsset, price, value);
     }
     
-    function _removeOrderHarness(address sellToken, address buyToken, uint96 price) external {
-        super._removeOrder(sellToken, buyToken, price);
+    function _removeOrderHarness(address sellAsset, address buyAsset, uint96 price) external {
+        super._removeOrder(sellAsset, buyAsset, price);
     }
     
 }
 
-contract DummyToken is ERC20 {
+contract DummyAsset is ERC20 {
 
     mapping (address => uint) balances;
 
@@ -75,7 +75,7 @@ contract DummyToken is ERC20 {
 
 contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     AcuityDexIntrachainHarness public harness;
-    DummyToken dummyToken;
+    DummyAsset dummyAsset;
     AccountProxy account0;
     AccountProxy account1;
     AccountProxy account2;
@@ -96,7 +96,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         accounts[2] = address(account1);
         accounts[3] = address(account2);
         accounts[4] = address(account3);
-        dummyToken = new DummyToken(accounts);
+        dummyAsset = new DummyAsset(accounts);
     }
 
     function testEncodeDecodeOrderId() public view {
@@ -129,24 +129,24 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testDepositERC20() public {
-        bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), 1001);
+        bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyAsset), address(this), 1001);
         vm.expectRevert(error);
-        harness.depositERC20(address(dummyToken), 1001);
+        harness.depositERC20(address(dummyAsset), 1001);
 
-        uint oldBalance = dummyToken.balanceOf(address(this));
+        uint oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Deposit(address(dummyToken), address(this), 10);
-        harness.depositERC20(address(dummyToken), 10);
-        assertEq(harness.getBalance(address(dummyToken), address(this)), 10);
-        uint newBalance = dummyToken.balanceOf(address(this));
+        emit Deposit(address(dummyAsset), address(this), 10);
+        harness.depositERC20(address(dummyAsset), 10);
+        assertEq(harness.getBalance(address(dummyAsset), address(this)), 10);
+        uint newBalance = dummyAsset.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 10);
 
-        oldBalance = dummyToken.balanceOf(address(this));
+        oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Deposit(address(dummyToken), address(this), 20);
-        harness.depositERC20(address(dummyToken), 20);
-        assertEq(harness.getBalance(address(dummyToken), address(this)), 30);
-        newBalance = dummyToken.balanceOf(address(this));
+        emit Deposit(address(dummyAsset), address(this), 20);
+        harness.depositERC20(address(dummyAsset), 20);
+        assertEq(harness.getBalance(address(dummyAsset), address(this)), 30);
+        newBalance = dummyAsset.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 20);
     }
 
@@ -163,24 +163,24 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 1);
 
-        harness.depositERC20(address(dummyToken), 10);
+        harness.depositERC20(address(dummyAsset), 10);
         vm.expectRevert(InsufficientBalance.selector);
-        harness.withdraw(address(dummyToken), 11);
+        harness.withdraw(address(dummyAsset), 11);
 
-        oldBalance = dummyToken.balanceOf(address(this));
+        oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 1);
-        harness.withdraw(address(dummyToken), 1);
-        assertEq(harness.getBalance(address(dummyToken), address(this)), 9);
-        newBalance = dummyToken.balanceOf(address(this));
+        emit Withdrawal(address(dummyAsset), address(this), 1);
+        harness.withdraw(address(dummyAsset), 1);
+        assertEq(harness.getBalance(address(dummyAsset), address(this)), 9);
+        newBalance = dummyAsset.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 1);
 
-        oldBalance = dummyToken.balanceOf(address(this));
+        oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 9);
-        harness.withdraw(address(dummyToken), 9);
-        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
-        newBalance = dummyToken.balanceOf(address(this));
+        emit Withdrawal(address(dummyAsset), address(this), 9);
+        harness.withdraw(address(dummyAsset), 9);
+        assertEq(harness.getBalance(address(dummyAsset), address(this)), 0);
+        newBalance = dummyAsset.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 9);
     }
 
@@ -197,18 +197,18 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 80);
         
-        harness.depositERC20(address(dummyToken), 10);
-        oldBalance = dummyToken.balanceOf(address(this));
+        harness.depositERC20(address(dummyAsset), 10);
+        oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 10);
-        harness.withdrawAll(address(dummyToken));
-        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
-        newBalance = dummyToken.balanceOf(address(this));
+        emit Withdrawal(address(dummyAsset), address(this), 10);
+        harness.withdrawAll(address(dummyAsset));
+        assertEq(harness.getBalance(address(dummyAsset), address(this)), 0);
+        newBalance = dummyAsset.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 10);
     }
 
     function test_AddOrder() public {
-        vm.expectRevert(TokensNotDifferent.selector);
+        vm.expectRevert(AssetsNotDifferent.selector);
         harness._addOrderHarness(address(7), address(7), 82, 90);
         vm.expectRevert(NoValue.selector);
         harness._addOrderHarness(address(7), address(8), 82, 0);
@@ -405,16 +405,16 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testAddOrderWithDepositERC20() public {
-        uint oldBalance = dummyToken.balanceOf(address(this));
+        uint oldBalance = dummyAsset.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit OrderAdded(address(dummyToken), address(8), address(this), 18, 90);
-        harness.addOrderWithDepositERC20(address(dummyToken), address(8), 18, 90);
-        uint newBalance = dummyToken.balanceOf(address(this));
+        emit OrderAdded(address(dummyAsset), address(8), address(this), 18, 90);
+        harness.addOrderWithDepositERC20(address(dummyAsset), address(8), 18, 90);
+        uint newBalance = dummyAsset.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 90);
     }
     
     function test_RemoveOrder() public {
-        vm.expectRevert(TokensNotDifferent.selector);
+        vm.expectRevert(AssetsNotDifferent.selector);
         harness._removeOrderHarness(address(7), address(7), 82);
         vm.expectRevert(OrderNotFound.selector);
         harness._removeOrderHarness(address(7), address(8), 82);
