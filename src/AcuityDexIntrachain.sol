@@ -288,12 +288,23 @@ contract AcuityDexIntrachain {
         _depositERC20(sellAsset, value);
     }
 
+    function _deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        // Find the previous sell order.
+        bytes32 prev = 0;
+        while (orderLL[prev] != orderId) {
+            prev = orderLL[prev];
+        }
+        // Remove from linked list.        
+        orderLL[prev] = orderLL[orderId];
+        delete orderLL[orderId];
+    }
+
     function _removeOrder(address sellAsset, address buyAsset, uint96 sellPrice) internal
         assetsDifferent(sellAsset, buyAsset)
         returns (uint value)
     {
-        // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Determine the orderId.
@@ -306,14 +317,8 @@ contract AcuityDexIntrachain {
         }
         // Delete the order value.
         delete orderValue[orderId];
-        // Find the previous sell order.
-        bytes32 prev = 0;
-        while (orderLL[prev] != orderId) {
-            prev = orderLL[prev];
-        }
-        // Remove from linked list.        
-        orderLL[prev] = orderLL[orderId];
-        delete orderLL[orderId];
+        // Delete the order from the linked list.
+        _deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
         emit OrderRemoved(sellAsset, buyAsset, msg.sender, sellPrice, value);
     }
@@ -347,7 +352,8 @@ contract AcuityDexIntrachain {
             partialValue = value;
             // Delete the order value.
             delete orderValue[orderId];
-            // _deleteOrderLL()
+            // Delete the order from the linked list.
+            _deleteOrderLL(sellAsset, buyAsset, orderId);
         }
         else {
             orderValue[orderId] = value - partialValue;
