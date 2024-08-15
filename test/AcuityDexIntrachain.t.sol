@@ -20,18 +20,18 @@ contract AccountProxy {
 }
 
 contract AcuityDexIntrachainHarness is AcuityDexIntrachain {
-    function encodeOrderIdHarness(uint96 sellPrice) external view returns (bytes32 order) {
-        order = super.encodeOrderId(sellPrice);
+    function encodeOrderIdHarness(uint96 price) external view returns (bytes32 order) {
+        order = super.encodeOrderId(price);
     }
 
-    function encodeOrderIdHarness(address account, uint96 sellPrice) external pure returns (bytes32 order) {
-        order = super.encodeOrderId(account, sellPrice);
+    function encodeOrderIdHarness(address account, uint96 price) external pure returns (bytes32 order) {
+        order = super.encodeOrderId(account, price);
     }
 
     function decodeOrderIdHarness(bytes32 order) external pure
-        returns (address account, uint96 sellPrice)
+        returns (address account, uint96 price)
     {
-        (account, sellPrice) = super.decodeOrderId(order);
+        (account, price) = super.decodeOrderId(order);
     }
     
     function _addOrderValueHarness(address sellAsset, address buyAsset, uint96 price, uint value) external {

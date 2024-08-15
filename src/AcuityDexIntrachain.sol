@@ -252,12 +252,12 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order.
      */
-    function addOrderValue(address sellAsset, address buyAsset, uint96 sellPrice, uint value) external {
+    function addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) external {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
         if (assetBalance[sellAsset] < value) revert InsufficientBalance();
         // Add order.
-        _addOrderValue(sellAsset, buyAsset, sellPrice, value);
+        _addOrderValue(sellAsset, buyAsset, price, value);
         // Update Balance.
         assetBalance[sellAsset] -= value;
     }
@@ -265,16 +265,16 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderValueWithDeposit(address buyAsset, uint96 sellPrice) external payable {
-        _addOrderValue(address(0), buyAsset, sellPrice, msg.value);
+    function addOrderValueWithDeposit(address buyAsset, uint96 price) external payable {
+        _addOrderValue(address(0), buyAsset, price, msg.value);
     }
 
     /**
      * @dev Add sell order of ERC20 asset.
      */
-    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 sellPrice, uint value) external {
+    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 price, uint value) external {
         // Add the sell order.
-        _addOrderValue(sellAsset, buyAsset, sellPrice, value);
+        _addOrderValue(sellAsset, buyAsset, price, value);
         // Transfer the assets from the seller to this contract.
         _depositERC20(sellAsset, value);
     }
@@ -292,14 +292,14 @@ contract AcuityDexIntrachain {
         delete orderLL[orderId];
     }
 
-    function _removeOrder(address sellAsset, address buyAsset, uint96 sellPrice) internal
+    function _removeOrder(address sellAsset, address buyAsset, uint96 price) internal
         assetsDifferent(sellAsset, buyAsset)
         returns (uint valueRemoved)
     {
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Determine the orderId.
-        bytes32 orderId = encodeOrderId(sellPrice);
+        bytes32 orderId = encodeOrderId(price);
         // Get the value of the order being removed.
         valueRemoved = orderValue[orderId];
         // Check if the order exists.
@@ -311,57 +311,57 @@ contract AcuityDexIntrachain {
         // Delete the order from the linked list.
         _deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, sellPrice, valueRemoved);
+        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, valueRemoved);
     }
 
-    function removeOrder(address sellAsset, address buyAsset, uint96 sellPrice) external {
-        uint valueRemoved = _removeOrder(sellAsset, buyAsset, sellPrice);
+    function removeOrder(address sellAsset, address buyAsset, uint96 price) external {
+        uint valueRemoved = _removeOrder(sellAsset, buyAsset, price);
         accountAssetBalance[msg.sender][sellAsset] += valueRemoved;
     }
     
-    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 sellPrice) external {
-        uint valueRemoved = _removeOrder(sellAsset, buyAsset, sellPrice);
+    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 price) external {
+        uint valueRemoved = _removeOrder(sellAsset, buyAsset, price);
         _withdraw(sellAsset, valueRemoved);
     }
 
-    function _removeOrderValue(address sellAsset, address buyAsset, uint96 sellPrice, uint value) internal
+    function _removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) internal
         assetsDifferent(sellAsset, buyAsset)
-        hasValue(value)
+        hasValue(valueLimit)
         returns (uint valueRemoved)
     {
         // Determine the orderId.
-        bytes32 orderId = encodeOrderId(sellPrice);
+        bytes32 orderId = encodeOrderId(price);
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Get the value of the order being removed.
-        uint currentValue = orderValue[orderId];
+        uint value = orderValue[orderId];
         // Check if the order exists.
-        if (currentValue == 0) {
+        if (value == 0) {
             revert OrderNotFound();
         }
         // Is the whole order being deleted?
-        if (value >= currentValue) {
-            valueRemoved = currentValue;
+        if (valueLimit >= value) {
+            valueRemoved = value;
             // Delete the order value.
             delete orderValue[orderId];
             // Delete the order from the linked list.
             _deleteOrderLL(sellAsset, buyAsset, orderId);
         }
         else {
-            orderValue[orderId] = currentValue - value;
-            valueRemoved = value;
+            orderValue[orderId] = value - valueLimit;
+            valueRemoved = valueLimit;
         }
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, sellPrice, valueRemoved);
+        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, valueRemoved);
     }
 
-    function removeOrderValue(address sellAsset, address buyAsset, uint96 sellPrice, uint value) external {
-        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, sellPrice, value);
+    function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
+        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
         accountAssetBalance[msg.sender][sellAsset] += valueRemoved;
     }
     
-    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 sellPrice, uint value) external {
-        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, sellPrice, value);
+    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
+        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
         _withdraw(sellAsset, valueRemoved);
     }
 
@@ -431,11 +431,11 @@ contract AcuityDexIntrachain {
         // Get the lowest sell order.
         bytes32 order = orderLL[0];
         while (order != 0) {
-            (address sellAccount, uint96 sellPrice) = decodeOrderId(order);
+            (address sellAccount, uint96 price) = decodeOrderId(order);
             // Check if we have hit the price limit.
-            if (priceLimit > 0 && sellPrice > priceLimit) break;
+            if (priceLimit > 0 && price > priceLimit) break;
             uint orderSellValue = orderValue[order];
-            uint matchedSellValue = (buyValueMax * 1 ether) / sellPrice;
+            uint matchedSellValue = (buyValueMax * 1 ether) / price;
 
             if (orderSellValue > matchedSellValue) {
                 // Partial buy.
@@ -448,7 +448,7 @@ contract AcuityDexIntrachain {
             }
             else {
                 // Full buy.
-                uint matchedBuyValue = (orderSellValue * sellPrice) / 1 ether;
+                uint matchedBuyValue = (orderSellValue * price) / 1 ether;
                 buyValueMax -= matchedBuyValue;
                 bytes32 next = orderLL[order];
                 // Delete the sell order.
@@ -600,11 +600,11 @@ contract AcuityDexIntrachain {
 
         orderId = orderLL[0];
         for (uint i = 0; i < orderCount; i++) {
-            (address sellAccount, uint96 sellPrice) = decodeOrderId(orderId);
+            (address sellAccount, uint96 price) = decodeOrderId(orderId);
             
             orderBook[i] = Order({
                 account: sellAccount,
-                price: sellPrice,
+                price: price,
                 value: orderValue[orderId] 
             });
 
