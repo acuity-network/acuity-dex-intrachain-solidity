@@ -443,14 +443,18 @@ contract AcuityDexIntrachain {
             bigUnit = 1 ether;
         }
         else {
-            bigUnit = 10 ^ ERC20(asset).decimals();
+            bigUnit = 10 ** ERC20(asset).decimals();
         }
     }
 
     function _match(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) internal
         assetsDifferent(sellAsset, buyAsset)
+        hasValue(buyValueLimit)
         returns (uint sellValue, uint buyValue)
     {
+        // A price limit of 0 is no limit.
+        if (priceLimit == 0) priceLimit = type(uint).max;
+        // Determine the value of 1 big unit of sell asset.
         uint sellAssetBigUnit = getAssetBigUnit(sellAsset);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
@@ -463,33 +467,17 @@ contract AcuityDexIntrachain {
             (address sellAccount, uint price) = decodeOrderId(orderId);
             // Check if we have hit the price limit.
             if (price > priceLimit) break;
-            // Calculate how much of the sell asset can be bought at the current order's price.
-            uint matchedSellValue = (buyValueLimit * sellAssetBigUnit) / price;
-            // Is there a full or partial match?
+            // Calculate how much buy asset it will take to buy this order.
             uint orderSellValue = orderValue[orderId];
-            if (orderSellValue > matchedSellValue) {
-                // Partial buy.
-                // Update buyer balances.
-                sellValue += matchedSellValue;
-                buyValue += buyValueLimit;
-                // Pay seller.
-                accountAssetBalance[sellAccount][buyAsset] += buyValueLimit;
-                // Update order value.
-                orderValue[orderId] = orderSellValue - matchedSellValue;
-                // Log the event.
-                emit OrderPartialMatch(sellAsset, buyAsset, orderId, matchedSellValue);
-                // Exit.
-                break;
-            }
-            else {
-                // Full buy. 8,700 - (1/5 refund) = 6,960 gas
-                // Calculate how much to buy the whole order.
-                uint matchedBuyValue = (orderSellValue * price) / sellAssetBigUnit;
+            uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
+            // Is there a full or partial match?
+            if (buyValueLimit >= orderBuyValue) {
+                // Full match. 8,700 - (1/5 refund) = 6,960 gas
                 // Update buyer balances.
                 sellValue += orderSellValue;
-                buyValue += matchedBuyValue;
+                buyValue += orderBuyValue;
                 // Pay seller.
-                accountAssetBalance[sellAccount][buyAsset] += matchedBuyValue;  // 2,900
+                accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;  // 2,900
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];    // 2,900 and 4,800 refund
@@ -499,17 +487,33 @@ contract AcuityDexIntrachain {
                 // Next order.
                 orderId = next;
                 // Is all the buy value spent?
-                if (buyValueLimit == matchedBuyValue) {
+                if (buyValueLimit == orderBuyValue) {
                     break;
                 }
                 else {
                     // Update remaining buy value.
-                    buyValueLimit -= matchedBuyValue;
+                    buyValueLimit -= orderBuyValue;
                 }
             }
+            else {
+                // Partial buy.
+                // Calculate how much of the sell asset can be bought at the current order's price.
+                uint sellValueLimit = (buyValueLimit * sellAssetBigUnit) / price;
+                // Update buyer balances.
+                sellValue += sellValueLimit;
+                buyValue += buyValueLimit;
+                // Pay seller.
+                accountAssetBalance[sellAccount][buyAsset] += buyValueLimit;
+                // Update order value.
+                orderValue[orderId] = orderSellValue - sellValueLimit;
+                // Log the event.
+                emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellValueLimit);
+                // Exit.
+                break;
+            }
         }
-        // Did anything happen?
-        if (buyValue == 0) revert NoMatch();
+        // Was anything bought?
+        if (sellValue == 0) revert NoMatch();
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
         // Log the event.
@@ -568,10 +572,10 @@ contract AcuityDexIntrachain {
     function buyWithDepositERC20(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
         // Execute the buy.
         (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueLimit, priceLimit);
-        // Transfer the buy assets from the buyer to this contract.
-        _depositERC20(buyAsset, buyValue);
         // Update buyer's sell asset balance.
         accountAssetBalance[msg.sender][sellAsset] += sellValue;
+        // Transfer the buy assets from the buyer to this contract.
+        _depositERC20(buyAsset, buyValue);
     }
 
     /**
