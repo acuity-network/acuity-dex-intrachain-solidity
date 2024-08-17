@@ -293,7 +293,7 @@ contract AcuityDexIntrachain {
         _depositERC20(sellAsset, value);
     }
 
-    function _deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
+    function deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
         // Find the previous sell order.
@@ -323,7 +323,7 @@ contract AcuityDexIntrachain {
         // Delete the order value.
         delete orderValue[orderId];
         // Delete the order from the linked list.
-        _deleteOrderLL(sellAsset, buyAsset, orderId);
+        deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
         emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, valueRemoved);
     }
@@ -359,7 +359,7 @@ contract AcuityDexIntrachain {
             // Delete the order value.
             delete orderValue[orderId];
             // Delete the order from the linked list.
-            _deleteOrderLL(sellAsset, buyAsset, orderId);
+            deleteOrderLL(sellAsset, buyAsset, orderId);
         }
         else {
             orderValue[orderId] = value - valueLimit;
@@ -447,9 +447,8 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function _match(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) internal
+    function matchOrders(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) internal
         assetsDifferent(sellAsset, buyAsset)
-        hasValue(buyValueLimit)
         returns (uint sellValue, uint buyValue)
     {
         // A price limit of 0 is no limit.
@@ -463,7 +462,7 @@ contract AcuityDexIntrachain {
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        while (orderId != 0) {
+        while (orderId != 0 && buyValueLimit != 0) {
             (address sellAccount, uint price) = decodeOrderId(orderId);
             // Check if we have hit the price limit.
             if (price > priceLimit) break;
@@ -472,31 +471,24 @@ contract AcuityDexIntrachain {
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
             if (buyValueLimit >= orderBuyValue) {
-                // Full match. 8,700 - (1/5 refund) = 6,960 gas
+                // Full match. 8,700 - (1/5 refund) = 6,960 storage gas
                 // Update buyer balances.
                 sellValue += orderSellValue;
                 buyValue += orderBuyValue;
+                // Update remaining buy value.
+                buyValueLimit -= orderBuyValue;
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;  // 2,900
+                // Log the event.
+                emit OrderFullMatch(sellAsset, buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];    // 2,900 and 4,800 refund
                 delete orderValue[orderId]; // 2,900 and 4,800 refund
-                // Log the event.
-                emit OrderFullMatch(sellAsset, buyAsset, orderId, orderSellValue);
-                // Next order.
                 orderId = next;
-                // Is all the buy value spent?
-                if (buyValueLimit == orderBuyValue) {
-                    break;
-                }
-                else {
-                    // Update remaining buy value.
-                    buyValueLimit -= orderBuyValue;
-                }
             }
             else {
-                // Partial buy.
+                // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
                 uint sellValueLimit = (buyValueLimit * sellAssetBigUnit) / price;
                 // Update buyer balances.
@@ -505,7 +497,7 @@ contract AcuityDexIntrachain {
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += buyValueLimit;
                 // Update order value.
-                orderValue[orderId] = orderSellValue - sellValueLimit;
+                orderValue[orderId] = orderSellValue - sellValueLimit; // TODO: ensure this isn't 0
                 // Log the event.
                 emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellValueLimit);
                 // Exit.
@@ -525,7 +517,7 @@ contract AcuityDexIntrachain {
      */
     function buy(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Check there is sufficient balance.
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
@@ -539,7 +531,7 @@ contract AcuityDexIntrachain {
      */
     function buyAndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Check there is sufficient balance.
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
@@ -556,7 +548,7 @@ contract AcuityDexIntrachain {
         // Log deposit.
         emit Deposit(address(0), msg.sender, msg.value);
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, address(0), msg.value, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, address(0), msg.value, priceLimit);
         // Credit the buyer with their change.
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         if (buyValue < msg.value) {
@@ -571,7 +563,7 @@ contract AcuityDexIntrachain {
      */
     function buyWithDepositERC20(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Update buyer's sell asset balance.
         accountAssetBalance[msg.sender][sellAsset] += sellValue;
         // Transfer the buy assets from the buyer to this contract.
@@ -585,7 +577,7 @@ contract AcuityDexIntrachain {
         // Log deposit.
         emit Deposit(address(0), msg.sender, msg.value);
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, address(0), msg.value, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, address(0), msg.value, priceLimit);
         // Send the buyer's change back.
         if (buyValue < msg.value) {
             _withdraw(address(0), msg.value - buyValue);
@@ -599,7 +591,7 @@ contract AcuityDexIntrachain {
      */
     function buyWithDepositERC20AndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = _match(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Transfer the buy assets from the buyer to this contract.
         _depositERC20(buyAsset, buyValue);
         // Transfer the sell assets to the buyer.
