@@ -27,12 +27,12 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    event OrderValueAdded(address sellAsset, address buyAsset, address account, uint price, uint value);
+    event OrderValueAdded(address sellAsset, address buyAsset, bytes32 orderId, uint value);
 
     /**
      * @dev
      */
-    event OrderValueRemoved(address sellAsset, address buyAsset, address account, uint price, uint value);
+    event OrderValueRemoved(address sellAsset, address buyAsset, bytes32 orderId, uint value);
 
     /**
      * @dev
@@ -233,7 +233,7 @@ contract AcuityDexIntrachain {
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Log event.
-        emit OrderValueAdded(sellAsset, buyAsset, msg.sender, price, value);
+        emit OrderValueAdded(sellAsset, buyAsset, orderId, value);
         // Get the old order value.
         uint oldValue = orderValue[orderId];
         // Does this order already exist?
@@ -326,7 +326,7 @@ contract AcuityDexIntrachain {
         // Delete the order from the linked list.
         deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, value);
+        emit OrderValueRemoved(sellAsset, buyAsset, orderId, value);
     }
 
     function removeOrder(address sellAsset, address buyAsset, uint96 price) external {
@@ -367,7 +367,7 @@ contract AcuityDexIntrachain {
             valueRemoved = valueLimit;
         }
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, valueRemoved);
+        emit OrderValueRemoved(sellAsset, buyAsset, orderId, valueRemoved);
     }
 
     function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
