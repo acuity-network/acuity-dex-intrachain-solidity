@@ -10,9 +10,9 @@ contract AcuityDexIntrachain {
     /**
      * @dev Mapping of selling asset address to buying asset address to linked list of sell orders, starting with the lowest selling price.
      */
-    mapping (address => mapping (address => mapping (bytes32 => bytes32))) sellBuyOrderLL;
+    mapping (address => mapping (address => mapping (bytes32 => bytes32))) sellBuyOrderIdLL;
 
-    mapping (address => mapping (address => mapping (bytes32 => uint))) sellBuyOrderValue;
+    mapping (address => mapping (address => mapping (bytes32 => uint))) sellBuyOrderIdValue;
 
     /**
      * @dev
@@ -229,7 +229,7 @@ contract AcuityDexIntrachain {
         hasValue(value)
     {
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Log event.
@@ -244,7 +244,7 @@ contract AcuityDexIntrachain {
         // Set the order value.
         orderValue[orderId] = value;  // 20,000
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Find correct place in linked list to insert order.
         bytes32 prev = 0;
         bytes32 next = orderLL[0];
@@ -296,7 +296,7 @@ contract AcuityDexIntrachain {
 
     function deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Find the previous sell order.
         bytes32 prev = 0;
         while (orderLL[prev] != orderId) {
@@ -312,7 +312,7 @@ contract AcuityDexIntrachain {
         returns (uint value)
     {
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Get the value of the order being removed.
@@ -347,7 +347,7 @@ contract AcuityDexIntrachain {
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         // Get the value of the order being removed.
         uint value = orderValue[orderId];
         // Check if the order exists.
@@ -384,9 +384,9 @@ contract AcuityDexIntrachain {
         assetsDifferent(sellAsset, buyAsset)
      {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
 
         bytes32 oldOrder = encodeOrderId(oldPrice);
         bytes32 newOrder = encodeOrderId(newPrice);
@@ -457,9 +457,9 @@ contract AcuityDexIntrachain {
         // Determine the value of 1 big unit of sell asset.
         uint sellAssetBigUnit = getAssetBigUnit(sellAsset);
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
@@ -623,8 +623,8 @@ contract AcuityDexIntrachain {
         assetsDifferent(sellAsset, buyAsset)
         returns (Order[] memory orderBook)
     {
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderLL[sellAsset][buyAsset];
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         uint orderCount = 0;
         
         bytes32 orderId = orderLL[0];
@@ -665,6 +665,6 @@ contract AcuityDexIntrachain {
         returns (uint value)
     {
         bytes32 orderId = encodeOrderId(seller, price);
-        value = sellBuyOrderValue[sellAsset][buyAsset][orderId];
+        value = sellBuyOrderIdValue[sellAsset][buyAsset][orderId];
     }
 }
