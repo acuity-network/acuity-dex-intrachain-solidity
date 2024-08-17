@@ -22,7 +22,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    event Withdrawal(address asset, address account, uint value);
+    event Withdrawal(address asset, address account, address to, uint value);
     
     /**
      * @dev
@@ -147,23 +147,24 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function _withdraw(address asset, uint value) internal
+    function _withdraw(address asset, address to, uint value) internal
         validAsset(asset)
     {
-        // https://docs.openzeppelin.com/contracts/3.x/api/utils#Address-sendValue-address-payable-uint256-
+        // Default to withdrawing to sender.
+        if (to == address(0)) to = msg.sender;
         bool success;
         bytes memory data;
         if (asset == address(0)) {
-            (success, data) = msg.sender.call{value: value}(hex"");
+            (success, data) = to.call{value: value}(hex"");
         }
         else {
-            (success, data) = asset.call(abi.encodeWithSelector(ERC20.transfer.selector, msg.sender, value));
+            (success, data) = asset.call(abi.encodeWithSelector(ERC20.transfer.selector, to, value));
         }
         // TODO: Check this
         if (success && data.length != 0) success = abi.decode(data, (bool));
-        if (!success) revert WithdrawalFailed(asset, msg.sender, value);
+        if (!success) revert WithdrawalFailed(asset, to, value);
         // Log event.
-        emit Withdrawal(asset, msg.sender, value);
+        emit Withdrawal(asset, msg.sender, to, value);
     }
 
     function encodeOrderId(uint96 price) internal view returns (bytes32 orderId) {
@@ -198,26 +199,26 @@ contract AcuityDexIntrachain {
         _depositERC20(asset, value);
     }
 
-    function withdraw(address asset, uint value) external hasValue(value) {
+    function withdraw(address asset, address to, uint value) external hasValue(value) {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
         if (assetBalance[asset] < value) revert InsufficientBalance();
         // Update balance.
-        accountAssetBalance[msg.sender][asset] -= value;
+        assetBalance[asset] -= value;
         // Transfer value.
-        _withdraw(asset, value);
+        _withdraw(asset, to, value);
     }
 
-    function withdrawAll(address asset) external {
+    function withdrawAll(address asset, address to) external {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Get asset balance.
         uint value = assetBalance[asset];
         // Check there is a balance.
-        if (value == 0) revert InsufficientBalance();
+        if (value == 0) revert NoValue();
         // Delete asset balance.
         delete assetBalance[asset];
         // Transfer value.
-        _withdraw(asset, value);
+        _withdraw(asset, to, value);
     }
 
     /**
@@ -308,16 +309,16 @@ contract AcuityDexIntrachain {
 
     function _removeOrder(address sellAsset, address buyAsset, uint96 price) internal
         assetsDifferent(sellAsset, buyAsset)
-        returns (uint valueRemoved)
+        returns (uint value)
     {
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderValue[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Get the value of the order being removed.
-        valueRemoved = orderValue[orderId];
+        value = orderValue[orderId];
         // Check if the order exists.
-        if (valueRemoved == 0) {
+        if (value == 0) {
             revert OrderNotFound();
         }
         // Delete the order value.
@@ -325,17 +326,17 @@ contract AcuityDexIntrachain {
         // Delete the order from the linked list.
         deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, valueRemoved);
+        emit OrderValueRemoved(sellAsset, buyAsset, msg.sender, price, value);
     }
 
     function removeOrder(address sellAsset, address buyAsset, uint96 price) external {
-        uint valueRemoved = _removeOrder(sellAsset, buyAsset, price);
-        accountAssetBalance[msg.sender][sellAsset] += valueRemoved;
+        uint value = _removeOrder(sellAsset, buyAsset, price);
+        accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 price) external {
-        uint valueRemoved = _removeOrder(sellAsset, buyAsset, price);
-        _withdraw(sellAsset, valueRemoved);
+    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 price, address to) external {
+        uint value = _removeOrder(sellAsset, buyAsset, price);
+        _withdraw(sellAsset, to, value);
     }
 
     function _removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) internal
@@ -370,13 +371,13 @@ contract AcuityDexIntrachain {
     }
 
     function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
-        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
-        accountAssetBalance[msg.sender][sellAsset] += valueRemoved;
+        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
+        accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
-        uint valueRemoved = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
-        _withdraw(sellAsset, valueRemoved);
+    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit, address to) external {
+        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
+        _withdraw(sellAsset, to, value);
     }
 
     function adjustOrderPrice(address sellAsset, address buyAsset, uint96 oldPrice, uint96 newPrice) external
@@ -529,7 +530,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with balance and withdraw.
      */
-    function buyAndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
+    function buyAndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit, address to) external {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Check there is sufficient balance.
@@ -537,8 +538,8 @@ contract AcuityDexIntrachain {
         if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
         // Update buyer's buy asset balance.
         assetBalance[buyAsset] -= buyValue;
-        // Transfer the sell assets to the buyer.
-        _withdraw(sellAsset, sellValue);
+        // Transfer the sell asset.
+        _withdraw(sellAsset, to, sellValue);
     }
     
     /**
@@ -573,29 +574,29 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(address sellAsset, uint priceLimit) external payable {
+    function buyWithDepositAndWithdraw(address sellAsset, uint priceLimit, address to) external payable {
         // Log deposit.
         emit Deposit(address(0), msg.sender, msg.value);
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchOrders(sellAsset, address(0), msg.value, priceLimit);
         // Send the buyer's change back.
         if (buyValue < msg.value) {
-            _withdraw(address(0), msg.value - buyValue);
+            _withdraw(address(0), msg.sender, msg.value - buyValue);
         }
-        // Transfer the sell assets to the buyer.
-        _withdraw(sellAsset, sellValue);
+        // Transfer the sell asset.
+        _withdraw(sellAsset, to, sellValue);
     }
 
     /**
      * @dev Buy with ERC20 asset.
      */
-    function buyWithDepositERC20AndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
+    function buyWithDepositERC20AndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit, address to) external {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
         // Transfer the buy assets from the buyer to this contract.
         _depositERC20(buyAsset, buyValue);
-        // Transfer the sell assets to the buyer.
-        _withdraw(sellAsset, sellValue);
+        // Transfer the sell asset.
+        _withdraw(sellAsset, to, sellValue);
     }
 
     /**

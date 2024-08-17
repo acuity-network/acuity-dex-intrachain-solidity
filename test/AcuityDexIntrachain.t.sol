@@ -13,6 +13,8 @@ contract AccountProxy {
         harness = _harness;
     }
 
+    receive() payable external {}
+
     function _addOrderValueHarness(address sellAsset, address buyAsset, uint96 price, uint value) external {
         harness._addOrderValueHarness(sellAsset, buyAsset, price, value);
     }
@@ -160,46 +162,78 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     function testWithdraw() public {
         harness.deposit{value: 1}();
         vm.expectRevert(InsufficientBalance.selector);
-        harness.withdraw(address(0), 2);
+        harness.withdraw(address(0), address(0), 2);
         
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(0), address(this), 1);
-        harness.withdraw(address(0), 1);
+        emit Withdrawal(address(0), address(this), address(this), 1);
+        harness.withdraw(address(0), address(0), 1);
         assertEq(harness.getBalance(address(0), address(this)), 0);
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 1);
 
         harness.depositERC20(address(dummyToken), 10);
         vm.expectRevert(InsufficientBalance.selector);
-        harness.withdraw(address(dummyToken), 11);
+        harness.withdraw(address(dummyToken), address(0), 11);
 
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 1);
-        harness.withdraw(address(dummyToken), 1);
+        emit Withdrawal(address(dummyToken), address(this), address(this), 1);
+        harness.withdraw(address(dummyToken), address(0), 1);
         assertEq(harness.getBalance(address(dummyToken), address(this)), 9);
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 1);
 
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 9);
-        harness.withdraw(address(dummyToken), 9);
+        emit Withdrawal(address(dummyToken), address(this), address(this), 9);
+        harness.withdraw(address(dummyToken), address(0), 9);
         assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
         newBalance = dummyToken.balanceOf(address(this));
+        assertEq(newBalance - oldBalance, 9);
+
+        harness.deposit{value: 1}();
+        vm.expectRevert(InsufficientBalance.selector);
+        harness.withdraw(address(0), address(account0), 2);
+        
+        oldBalance = address(account0).balance;
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(0), address(this), address(account0), 1);
+        harness.withdraw(address(0), address(account0), 1);
+        assertEq(harness.getBalance(address(0), address(this)), 0);
+        newBalance = address(account0).balance;
+        assertEq(newBalance - oldBalance, 1);
+
+        harness.depositERC20(address(dummyToken), 10);
+        vm.expectRevert(InsufficientBalance.selector);
+        harness.withdraw(address(dummyToken), address(account0), 11);
+
+        oldBalance = dummyToken.balanceOf(address(account0));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), address(account0), 1);
+        harness.withdraw(address(dummyToken), address(account0), 1);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 9);
+        newBalance = dummyToken.balanceOf(address(account0));
+        assertEq(newBalance - oldBalance, 1);
+
+        oldBalance = dummyToken.balanceOf(address(account0));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), address(account0), 9);
+        harness.withdraw(address(dummyToken), address(account0), 9);
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
+        newBalance = dummyToken.balanceOf(address(account0));
         assertEq(newBalance - oldBalance, 9);
     }
 
     function testWithdrawAll() public {
-        vm.expectRevert(InsufficientBalance.selector);
-        harness.withdrawAll(address(0));
+        vm.expectRevert(NoValue.selector);
+        harness.withdrawAll(address(0), address(0));
         
         harness.deposit{value: 80}();
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(0), address(this), 80);
-        harness.withdrawAll(address(0));
+        emit Withdrawal(address(0), address(this), address(this), 80);
+        harness.withdrawAll(address(0), address(0));
         assertEq(harness.getBalance(address(0), address(this)), 0);
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 80);
@@ -207,10 +241,31 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         harness.depositERC20(address(dummyToken), 10);
         oldBalance = dummyToken.balanceOf(address(this));
         vm.expectEmit(false, false, false, true);
-        emit Withdrawal(address(dummyToken), address(this), 10);
-        harness.withdrawAll(address(dummyToken));
+        emit Withdrawal(address(dummyToken), address(this), address(this), 10);
+        harness.withdrawAll(address(dummyToken), address(0));
         assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
         newBalance = dummyToken.balanceOf(address(this));
+        assertEq(newBalance - oldBalance, 10);
+
+        vm.expectRevert(NoValue.selector);
+        harness.withdrawAll(address(0), address(account0));
+        
+        harness.deposit{value: 80}();
+        oldBalance = address(account0).balance;
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(0), address(this), address(account0), 80);
+        harness.withdrawAll(address(0), address(account0));
+        assertEq(harness.getBalance(address(0), address(this)), 0);
+        newBalance = address(account0).balance;
+        assertEq(newBalance - oldBalance, 80);
+        
+        harness.depositERC20(address(dummyToken), 10);
+        oldBalance = dummyToken.balanceOf(address(account0));
+        vm.expectEmit(false, false, false, true);
+        emit Withdrawal(address(dummyToken), address(this), address(account0), 10);
+        harness.withdrawAll(address(dummyToken), address(account0));
+        assertEq(harness.getBalance(address(dummyToken), address(this)), 0);
+        newBalance = dummyToken.balanceOf(address(account0));
         assertEq(newBalance - oldBalance, 10);
     }
 
@@ -540,7 +595,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), address(this), 18, 90);
-        harness.removeOrderAndWithdraw(address(0), address(8), 18);
+        harness.removeOrderAndWithdraw(address(0), address(8), 18, address(this));
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 90);
     }
@@ -723,7 +778,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), address(this), 18, 80);
-        harness.removeOrderValueAndWithdraw(address(0), address(8), 18, 80);
+        harness.removeOrderValueAndWithdraw(address(0), address(8), 18, 80, address(this));
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 80);
     }
