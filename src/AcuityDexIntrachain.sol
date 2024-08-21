@@ -61,6 +61,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    error HasValue();
+
+    /**
+     * @dev
+     */
     error InsufficientBalance();
 
     /**
@@ -448,11 +453,123 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function matchOrders(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) internal
-        assetsDifferent(sellAsset, buyAsset)
+    function matchSellExact(address sellAsset, address buyAsset, uint sellTotal, uint buyLimit) internal
+        returns (uint buyValue)
+    {
+        // Determine the value of 1 big unit of sell asset.
+        uint sellAssetBigUnit = getAssetBigUnit(sellAsset);
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        // Get the first sell order.
+        bytes32 start = orderLL[0];
+        bytes32 orderId = start;
+        while (orderId != 0 && sellTotal != 0) {
+            (address sellAccount, uint price) = decodeOrderId(orderId);
+            uint orderSellValue = orderValue[orderId];
+            // Is there a full or partial match?
+            if (sellTotal >= orderSellValue) {
+                // Full match.
+                // Calculate how much buy asset it will take to buy this order.
+                uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
+                // Update buyer balances.
+                buyValue += orderBuyValue;
+                sellTotal -= orderSellValue;
+                // Pay seller.
+                accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;
+                // Log the event.
+                emit OrderFullMatch(sellAsset, buyAsset, orderId, orderSellValue);
+                // Delete the order.
+                bytes32 next = orderLL[orderId];
+                delete orderLL[orderId];
+                delete orderValue[orderId];
+                orderId = next;
+            }
+            else {
+                // Partial match.
+                // Calculate how much of the sell asset can be bought at the current order's price.
+                uint partialBuyValue = (sellTotal * price) / sellAssetBigUnit;
+                // Update buy balance.
+                buyValue += partialBuyValue;
+                // Pay seller.
+                accountAssetBalance[sellAccount][buyAsset] += partialBuyValue;
+                // Update order value.
+                orderValue[orderId] = orderSellValue - sellTotal; // TODO: ensure this isn't 0
+                // Update remaining sell limit.
+                sellTotal = 0;
+                // Log the event.
+                emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellTotal);
+            }
+            // Ensure that the amount spent was not above the limit.
+            if (buyValue > buyLimit) revert NoMatch();
+        }
+        // Update first order if neccessary.
+        if (start != orderId) orderLL[0] = orderId;
+    }
+
+    function matchBuyExact(address sellAsset, address buyAsset, uint buyTotal, uint sellLimit) internal
+        returns (uint sellValue)
+    {
+        // Determine the value of 1 big unit of sell asset.
+        uint sellAssetBigUnit = getAssetBigUnit(sellAsset);
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        // Get the first sell order.
+        bytes32 start = orderLL[0];
+        bytes32 orderId = start;
+        while (orderId != 0 && buyTotal != 0) {
+            (address sellAccount, uint price) = decodeOrderId(orderId);
+            // Calculate how much buy asset it will take to buy this order.
+            uint orderSellValue = orderValue[orderId];
+            uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
+            // Is there a full or partial match?
+            if (buyTotal >= orderBuyValue) {
+                // Full match. Update sell balance.
+                sellValue += orderSellValue;
+                // Update remaining buy limit.
+                buyTotal -= orderBuyValue;
+                // Pay seller.
+                accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;
+                // Log the event.
+                emit OrderFullMatch(sellAsset, buyAsset, orderId, orderSellValue);
+                // Delete the order.
+                bytes32 next = orderLL[orderId];
+                delete orderLL[orderId];
+                delete orderValue[orderId];
+                orderId = next;
+            }
+            else {
+                // Partial match.
+                // Calculate how much of the sell asset can be bought at the current order's price.
+                uint partialSellValue = (buyTotal * sellAssetBigUnit) / price;
+                // Update sell balance.
+                sellValue += partialSellValue;
+                // Pay seller.
+                accountAssetBalance[sellAccount][buyAsset] += buyTotal;
+                // Update order value.
+                orderValue[orderId] = orderSellValue - partialSellValue; // TODO: ensure this isn't 0
+                // Update remaining buy limit.
+                buyTotal = 0;
+                // Log the event.
+                emit OrderPartialMatch(sellAsset, buyAsset, orderId, partialSellValue);
+                // Exit.
+                break;
+            }
+        }
+        if (sellValue < sellLimit) revert NoMatch();
+        // Update first order if neccessary.
+        if (start != orderId) orderLL[0] = orderId;
+    }
+
+    function matchLimit(address sellAsset, address buyAsset, uint sellLimit, uint buyLimit, uint priceLimit) internal
         returns (uint sellValue, uint buyValue)
     {
-        // A price limit of 0 is no limit.
+        // A limit of 0 is no limit.
+        if (sellLimit == 0) sellLimit = type(uint).max;
+        if (buyLimit == 0) buyLimit = type(uint).max;
         if (priceLimit == 0) priceLimit = type(uint).max;
         // Determine the value of 1 big unit of sell asset.
         uint sellAssetBigUnit = getAssetBigUnit(sellAsset);
@@ -463,7 +580,7 @@ contract AcuityDexIntrachain {
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        while (orderId != 0 && buyValueLimit != 0) {
+        while (orderId != 0 && buyLimit != 0 && sellLimit != 0) {
             (address sellAccount, uint price) = decodeOrderId(orderId);
             // Check if we have hit the price limit.
             if (price > priceLimit) break;
@@ -471,13 +588,14 @@ contract AcuityDexIntrachain {
             uint orderSellValue = orderValue[orderId];
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
-            if (buyValueLimit >= orderBuyValue) {
+            if (sellLimit >= orderSellValue && buyLimit >= orderBuyValue) {
                 // Full match. 8,700 - (1/5 refund) = 6,960 storage gas
                 // Update buyer balances.
                 sellValue += orderSellValue;
                 buyValue += orderBuyValue;
-                // Update remaining buy value.
-                buyValueLimit -= orderBuyValue;
+                // Update remaining buy limit.
+                sellLimit -= orderSellValue;
+                buyLimit -= orderBuyValue;
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;  // 2,900
                 // Log the event.
@@ -491,12 +609,14 @@ contract AcuityDexIntrachain {
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint sellValueLimit = (buyValueLimit * sellAssetBigUnit) / price;
+                uint sellValueLimit = (buyLimit * sellAssetBigUnit) / price;
                 // Update buyer balances.
                 sellValue += sellValueLimit;
-                buyValue += buyValueLimit;
+                buyValue += buyLimit;
+                // Buy limit has now been spent.
+                buyLimit = 0;
                 // Pay seller.
-                accountAssetBalance[sellAccount][buyAsset] += buyValueLimit;
+                accountAssetBalance[sellAccount][buyAsset] += buyLimit;
                 // Update order value.
                 orderValue[orderId] = orderSellValue - sellValueLimit; // TODO: ensure this isn't 0
                 // Log the event.
@@ -509,94 +629,109 @@ contract AcuityDexIntrachain {
         if (sellValue == 0) revert NoMatch();
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
+    }
+
+    enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
+
+    struct BuyOrder {
+        BuyOrderType orderType;
+        address sellAsset;
+        address buyAsset;
+        uint sellValue;
+        uint buyValue;
+        uint priceLimit;
+    }
+
+    function matchBuyOrder(BuyOrder calldata order) internal 
+        assetsDifferent(order.sellAsset, order.buyAsset)
+        returns (uint sellValue, uint buyValue)
+    {
+        if (order.orderType == BuyOrderType.SellValueExact) {
+            sellValue = order.sellValue;
+            buyValue = matchSellExact(order.sellAsset, order.buyAsset, order.sellValue, order.buyValue);
+        }
+        else if (order.orderType == BuyOrderType.BuyValueExact) {
+            buyValue = order.buyValue;
+            sellValue = matchBuyExact(order.sellAsset, order.buyAsset, order.buyValue, order.sellValue);
+        }
+        else {
+            (sellValue, buyValue) = matchLimit(order.sellAsset, order.buyAsset, order.sellValue, order.buyValue, order.priceLimit);
+        }
         // Log the event.
-        emit MatchingCompleted(sellAsset, buyAsset, msg.sender, sellValue, buyValue);
+        emit MatchingCompleted(order.sellAsset, order.buyAsset, msg.sender, sellValue, buyValue);
     }
 
     /**
      * @dev Buy.
      */
-    function buy(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
+    function buy(BuyOrder calldata order) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Check there is sufficient balance.
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
-        if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
+        if (assetBalance[order.buyAsset] < buyValue) revert InsufficientBalance();
         // Update buyer's balances.
-        assetBalance[buyAsset] -= buyValue;
-        assetBalance[sellAsset] += sellValue;
+        assetBalance[order.buyAsset] -= buyValue;
+        assetBalance[order.sellAsset] += sellValue;
     }
 
     /**
      * @dev Buy with balance and withdraw.
      */
-    function buyAndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit, address to) external {
+    function buyAndWithdraw(BuyOrder calldata order, address to) external {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Check there is sufficient balance.
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
-        if (assetBalance[buyAsset] < buyValue) revert InsufficientBalance();
+        if (assetBalance[order.buyAsset] < buyValue) revert InsufficientBalance();
         // Update buyer's buy asset balance.
-        assetBalance[buyAsset] -= buyValue;
+        assetBalance[order.buyAsset] -= buyValue;
         // Transfer the sell asset.
-        _withdraw(sellAsset, to, sellValue);
-    }
-    
-    /**
-     * @dev Buy with base coin.
-     */
-    function buyWithDeposit(address sellAsset, uint priceLimit) external payable {
-        // Log deposit.
-        emit Deposit(address(0), msg.sender, msg.value);
-        // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, address(0), msg.value, priceLimit);
-        // Credit the buyer with their change.
-        mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
-        if (buyValue < msg.value) {
-            assetBalance[address(0)] += msg.value - buyValue;
-        }
-        // Update buyer's sell asset balance.
-        assetBalance[sellAsset] += sellValue;
+        _withdraw(order.sellAsset, to, sellValue);
     }
 
-    /**
-     * @dev Buy with ERC20 asset.
-     */
-    function buyWithDepositERC20(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit) external {
-        // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
-        // Update buyer's sell asset balance.
-        accountAssetBalance[msg.sender][sellAsset] += sellValue;
-        // Transfer the buy assets from the buyer to this contract.
-        _depositERC20(buyAsset, buyValue);
+    function depositAsset(address asset, uint value) internal {
+        if (asset == address(0)) {
+            // Did the buyer pay enough?
+            if (value > msg.value) {
+                revert();
+            }
+            // Log deposit.
+            emit Deposit(address(0), msg.sender, msg.value);
+            // Send the buyer's change back.
+            if (value < msg.value) {
+                _withdraw(address(0), msg.sender, msg.value - value);
+            }
+        }
+        else {
+            if (msg.value != 0) revert HasValue();
+            // Transfer the buy assets from the buyer to this contract.
+            _depositERC20(asset, value);
+        }
     }
 
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(address sellAsset, uint priceLimit, address to) external payable {
-        // Log deposit.
-        emit Deposit(address(0), msg.sender, msg.value);
+    function buyWithDeposit(BuyOrder calldata order) external payable {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, address(0), msg.value, priceLimit);
-        // Send the buyer's change back.
-        if (buyValue < msg.value) {
-            _withdraw(address(0), msg.sender, msg.value - buyValue);
-        }
-        // Transfer the sell asset.
-        _withdraw(sellAsset, to, sellValue);
+        (uint sellValue, uint buyValue) = matchBuyOrder(order);
+        // Update buyer's sell asset balance.
+        accountAssetBalance[msg.sender][order.sellAsset] += sellValue;
+        // Transfer the buy assets from the buyer to this contract.
+        depositAsset(order.buyAsset, buyValue);
     }
 
     /**
-     * @dev Buy with ERC20 asset.
+     * @dev Buy with base coin.
      */
-    function buyWithDepositERC20AndWithdraw(address sellAsset, address buyAsset, uint buyValueLimit, uint priceLimit, address to) external {
+    function buyWithDepositAndWithdraw(BuyOrder calldata order, address to) external payable {
         // Execute the buy.
-        (uint sellValue, uint buyValue) = matchOrders(sellAsset, buyAsset, buyValueLimit, priceLimit);
+        (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Transfer the buy assets from the buyer to this contract.
-        _depositERC20(buyAsset, buyValue);
+        depositAsset(order.buyAsset, buyValue);
         // Transfer the sell asset.
-        _withdraw(sellAsset, to, sellValue);
+        _withdraw(order.sellAsset, to, sellValue);
     }
 
     /**
