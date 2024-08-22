@@ -453,7 +453,7 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function matchSellExact(address sellAsset, address buyAsset, uint sellTotal, uint buyLimit) internal
+    function matchSellExact(address sellAsset, address buyAsset, uint sellValue, uint buyLimit) internal
         returns (uint buyValue)
     {
         // Determine the value of 1 big unit of sell asset.
@@ -465,17 +465,20 @@ contract AcuityDexIntrachain {
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        while (orderId != 0 && sellTotal != 0) {
+        while (sellValue != 0) {
+            // Check if we have run out of orders.
+            if (orderId == 0) revert NoMatch();
+            // Get order account, price and value.
             (address sellAccount, uint price) = decodeOrderId(orderId);
             uint orderSellValue = orderValue[orderId];
             // Is there a full or partial match?
-            if (sellTotal >= orderSellValue) {
+            if (sellValue >= orderSellValue) {
                 // Full match.
                 // Calculate how much buy asset it will take to buy this order.
                 uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
                 // Update buyer balances.
                 buyValue += orderBuyValue;
-                sellTotal -= orderSellValue;
+                sellValue -= orderSellValue;
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;
                 // Log the event.
@@ -489,17 +492,17 @@ contract AcuityDexIntrachain {
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint partialBuyValue = (sellTotal * price) / sellAssetBigUnit;
+                uint partialBuyValue = (sellValue * price) / sellAssetBigUnit;
                 // Update buy balance.
                 buyValue += partialBuyValue;
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += partialBuyValue;
-                // Update order value.
-                orderValue[orderId] = orderSellValue - sellTotal; // TODO: ensure this isn't 0
-                // Update remaining sell limit.
-                sellTotal = 0;
+                // Update order value. Will not be 0.
+                orderValue[orderId] = orderSellValue - sellValue;
+                // Update remaining sell value.
+                sellValue = 0;
                 // Log the event.
-                emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellTotal);
+                emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellValue);
             }
             // Ensure that the amount spent was not above the limit.
             if (buyValue > buyLimit) revert NoMatch();
@@ -508,7 +511,7 @@ contract AcuityDexIntrachain {
         if (start != orderId) orderLL[0] = orderId;
     }
 
-    function matchBuyExact(address sellAsset, address buyAsset, uint buyTotal, uint sellLimit) internal
+    function matchBuyExact(address sellAsset, address buyAsset, uint buyValue, uint sellLimit) internal
         returns (uint sellValue)
     {
         // Determine the value of 1 big unit of sell asset.
@@ -520,17 +523,20 @@ contract AcuityDexIntrachain {
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        while (orderId != 0 && buyTotal != 0) {
+        while (buyValue != 0) {
+            // Check if we have run out of orders.
+            if (orderId == 0) revert NoMatch();
+            // Get order account, price and value.
             (address sellAccount, uint price) = decodeOrderId(orderId);
-            // Calculate how much buy asset it will take to buy this order.
             uint orderSellValue = orderValue[orderId];
+            // Calculate how much buy asset it will take to buy this order.
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
-            if (buyTotal >= orderBuyValue) {
+            if (buyValue >= orderBuyValue) {
                 // Full match. Update sell balance.
                 sellValue += orderSellValue;
                 // Update remaining buy limit.
-                buyTotal -= orderBuyValue;
+                buyValue -= orderBuyValue;
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;
                 // Log the event.
@@ -544,15 +550,24 @@ contract AcuityDexIntrachain {
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint partialSellValue = (buyTotal * sellAssetBigUnit) / price;
+                uint partialSellValue = (buyValue * sellAssetBigUnit) / price;
                 // Update sell balance.
                 sellValue += partialSellValue;
                 // Pay seller.
-                accountAssetBalance[sellAccount][buyAsset] += buyTotal;
+                accountAssetBalance[sellAccount][buyAsset] += buyValue;
                 // Update order value.
-                orderValue[orderId] = orderSellValue - partialSellValue; // TODO: ensure this isn't 0
-                // Update remaining buy limit.
-                buyTotal = 0;
+                orderSellValue -= partialSellValue;
+                // It may be possible for the order to be consumed entirely due to rounding error.
+                if (orderSellValue == 0) {
+                    // Delete the order.
+                    bytes32 next = orderLL[orderId];
+                    delete orderLL[orderId];
+                    delete orderValue[orderId];
+                    orderId = next;
+                }
+                else {
+                    orderValue[orderId] = orderSellValue;
+                }
                 // Log the event.
                 emit OrderPartialMatch(sellAsset, buyAsset, orderId, partialSellValue);
                 // Exit.
@@ -581,6 +596,7 @@ contract AcuityDexIntrachain {
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
         while (orderId != 0 && buyLimit != 0 && sellLimit != 0) {
+            // Get order account, price.
             (address sellAccount, uint price) = decodeOrderId(orderId);
             // Check if we have hit the price limit.
             if (price > priceLimit) break;
@@ -589,7 +605,7 @@ contract AcuityDexIntrachain {
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
             if (sellLimit >= orderSellValue && buyLimit >= orderBuyValue) {
-                // Full match. 8,700 - (1/5 refund) = 6,960 storage gas
+                // Full match.
                 // Update buyer balances.
                 sellValue += orderSellValue;
                 buyValue += orderBuyValue;
@@ -597,13 +613,13 @@ contract AcuityDexIntrachain {
                 sellLimit -= orderSellValue;
                 buyLimit -= orderBuyValue;
                 // Pay seller.
-                accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;  // 2,900
+                accountAssetBalance[sellAccount][buyAsset] += orderBuyValue;
                 // Log the event.
                 emit OrderFullMatch(sellAsset, buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
-                delete orderLL[orderId];    // 2,900 and 4,800 refund
-                delete orderValue[orderId]; // 2,900 and 4,800 refund
+                delete orderLL[orderId];
+                delete orderValue[orderId];
                 orderId = next;
             }
             else {
@@ -647,12 +663,12 @@ contract AcuityDexIntrachain {
         returns (uint sellValue, uint buyValue)
     {
         if (order.orderType == BuyOrderType.SellValueExact) {
-            sellValue = order.sellValue;
             buyValue = matchSellExact(order.sellAsset, order.buyAsset, order.sellValue, order.buyValue);
+            sellValue = order.sellValue;
         }
         else if (order.orderType == BuyOrderType.BuyValueExact) {
-            buyValue = order.buyValue;
             sellValue = matchBuyExact(order.sellAsset, order.buyAsset, order.buyValue, order.sellValue);
+            buyValue = order.buyValue;
         }
         else {
             (sellValue, buyValue) = matchLimit(order.sellAsset, order.buyAsset, order.sellValue, order.buyValue, order.priceLimit);
