@@ -123,7 +123,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testDeposit() public {
-        vm.expectRevert(NoValue.selector);
+        vm.expectRevert(ValueZero.selector);
         harness.deposit();
 
         vm.expectEmit(false, false, false, true);
@@ -138,6 +138,12 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testDepositERC20() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.depositERC20(address(this), 1001);
+
+        vm.expectRevert(InvalidAsset.selector);
+        harness.depositERC20(address(harness), 1001);
+
         bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), 1001);
         vm.expectRevert(error);
         harness.depositERC20(address(dummyToken), 1001);
@@ -160,10 +166,22 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testWithdraw() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.withdraw(address(this), address(0), 2);
+
+        vm.expectRevert(InvalidAsset.selector);
+        harness.withdraw(address(harness), address(0), 2);
+
+        vm.expectRevert(InvalidAddress.selector);
+        harness.withdraw(address(0), address(harness), 2);
+
+        vm.expectRevert(ValueZero.selector);
+        harness.withdraw(address(0), address(0), 0);
+
         harness.deposit{value: 1}();
         vm.expectRevert(InsufficientBalance.selector);
         harness.withdraw(address(0), address(0), 2);
-        
+
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit Withdrawal(address(0), address(this), address(this), 1);
@@ -226,7 +244,16 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testWithdrawAll() public {
-        vm.expectRevert(NoValue.selector);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.withdrawAll(address(this), address(0));
+
+        vm.expectRevert(InvalidAsset.selector);
+        harness.withdrawAll(address(harness), address(0));
+
+        vm.expectRevert(InvalidAddress.selector);
+        harness.withdrawAll(address(0), address(harness));
+
+        vm.expectRevert(ValueZero.selector);
         harness.withdrawAll(address(0), address(0));
         
         harness.deposit{value: 80}();
@@ -247,7 +274,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         newBalance = dummyToken.balanceOf(address(this));
         assertEq(newBalance - oldBalance, 10);
 
-        vm.expectRevert(NoValue.selector);
+        vm.expectRevert(ValueZero.selector);
         harness.withdrawAll(address(0), address(account0));
         
         harness.deposit{value: 80}();
@@ -270,11 +297,6 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function test_AddOrderValue() public {
-        vm.expectRevert(AssetsNotDifferent.selector);
-        harness._addOrderValueHarness(address(7), address(7), 82, 90);
-        vm.expectRevert(NoValue.selector);
-        harness._addOrderValueHarness(address(7), address(8), 82, 0);
-
         vm.expectEmit(false, false, false, true);
         emit OrderValueAdded(address(7), address(8), harness.encodeOrderIdHarness(address(this), 82), 90);
         harness._addOrderValueHarness(address(7), address(8), 82, 90);
@@ -445,6 +467,20 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testAddOrderValue() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValue(address(this), address(7), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValue(address(harness), address(7), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValue(address(7), address(this), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValue(address(7), address(harness), 82, 90);
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.addOrderValue(address(7), address(7), 82, 90);
+        vm.expectRevert(PriceZero.selector);
+        harness.addOrderValue(address(7), address(8), 0, 90);
+        vm.expectRevert(ValueZero.selector);
+        harness.addOrderValue(address(7), address(8), 82, 0);
         vm.expectRevert(InsufficientBalance.selector);
         harness.addOrderValue(address(0), address(8), 18, 90);
 
@@ -461,26 +497,49 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testAddOrderWithDeposit() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDeposit{value: 90}(address(this), 82);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDeposit{value: 90}(address(harness), 82);
+        vm.expectRevert(PriceZero.selector);
+        harness.addOrderValueWithDeposit{value: 90}(address(8), 0);
+        vm.expectRevert(ValueZero.selector);
+        harness.addOrderValueWithDeposit{value: 0}(address(8), 82);
+
         vm.expectEmit(false, false, false, true);
         emit OrderValueAdded(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
         harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
     }
 
     function testAddOrderWithDepositERC20() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDepositERC20(address(this), address(dummyToken), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDepositERC20(address(harness), address(dummyToken), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(this), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(harness), 82, 90);
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(dummyToken), 82, 90);
+        vm.expectRevert(PriceZero.selector);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(8), 0, 90);
+        vm.expectRevert(ValueZero.selector);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(8), 82, 0);
+
         uint oldBalance = dummyToken.balanceOf(address(this));
+        bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), oldBalance + 1);
+        vm.expectRevert(error);
+        harness.addOrderValueWithDepositERC20(address(dummyToken), address(8), 18, oldBalance + 1);
+
         vm.expectEmit(false, false, false, true);
         emit OrderValueAdded(address(dummyToken), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
         harness.addOrderValueWithDepositERC20(address(dummyToken), address(8), 18, 90);
         uint newBalance = dummyToken.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 90);
     }
-    
-    function test_RemoveOrder() public {
-        vm.expectRevert(AssetsNotDifferent.selector);
-        harness._removeOrderHarness(address(7), address(7), 82);
-        vm.expectRevert(OrderNotFound.selector);
-        harness._removeOrderHarness(address(7), address(8), 82);
 
+    function test_RemoveOrder() public {
         harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         Order[] memory orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 1);
@@ -579,8 +638,20 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testRemoveOrder() public {
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrder(address(this), address(7), 82);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrder(address(harness), address(7), 82);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrder(address(7), address(this), 82);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrder(address(7), address(harness), 82);
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.removeOrder(address(7), address(7), 82);
+        vm.expectRevert(PriceZero.selector);
+        harness.removeOrder(address(7), address(8), 0);
 
+        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         uint oldBalance = harness.getBalance(address(0), address(this));
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -590,8 +661,22 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testRemoveOrderAndWithdraw() public {
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderAndWithdraw(address(this), address(7), 82, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderAndWithdraw(address(harness), address(7), 82, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderAndWithdraw(address(7), address(this), 82, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderAndWithdraw(address(7), address(harness), 82, address(this));
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.removeOrderAndWithdraw(address(7), address(7), 82, address(this));
+        vm.expectRevert(PriceZero.selector);
+        harness.removeOrderAndWithdraw(address(7), address(8), 0, address(this));
+        vm.expectRevert(InvalidAddress.selector);
+        harness.removeOrderAndWithdraw(address(7), address(8), 82, address(harness));
 
+        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -601,13 +686,6 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function test_RemoveOrderValue() public {
-        vm.expectRevert(AssetsNotDifferent.selector);
-        harness._removeOrderValueHarness(address(7), address(7), 82, 8);
-        vm.expectRevert(NoValue.selector);
-        harness._removeOrderValueHarness(address(7), address(8), 82, 0);
-        vm.expectRevert(OrderNotFound.selector);
-        harness._removeOrderValueHarness(address(7), address(8), 82, 9);
-
         harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         Order[] memory orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 1);
@@ -760,10 +838,24 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 0);
     }
-    
-    function testRemoveOrderValue() public {
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
 
+    function testRemoveOrderValue() public {
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValue(address(this), address(7), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValue(address(harness), address(7), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValue(address(7), address(this), 82, 90);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValue(address(7), address(harness), 82, 90);
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.removeOrderValue(address(7), address(7), 82, 90);
+        vm.expectRevert(PriceZero.selector);
+        harness.removeOrderValue(address(7), address(8), 0, 90);
+        vm.expectRevert(ValueZero.selector);
+        harness.removeOrderValue(address(7), address(8), 82, 0);
+
+        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         uint oldBalance = harness.getBalance(address(0), address(this));
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -773,17 +865,29 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     }
 
     function testRemoveOrderValueAndWithdraw() public {
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValueAndWithdraw(address(this), address(7), 82, 90, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValueAndWithdraw(address(harness), address(7), 82, 90, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(this), 82, 90, address(this));
+        vm.expectRevert(InvalidAsset.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(harness), 82, 90, address(this));
+        vm.expectRevert(AssetsNotDifferent.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(7), 82, 90, address(this));
+        vm.expectRevert(PriceZero.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(8), 0, 90, address(this));
+        vm.expectRevert(ValueZero.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(8), 82, 0, address(this));
+        vm.expectRevert(InvalidAddress.selector);
+        harness.removeOrderValueAndWithdraw(address(7), address(8), 82, 90, address(harness));
 
+        harness.addOrderValueWithDeposit{value: 90}(address(8), 18);
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 80);
         harness.removeOrderValueAndWithdraw(address(0), address(8), 18, 80, address(this));
         uint newBalance = address(this).balance;
         assertEq(newBalance - oldBalance, 80);
-    }
-
-    function testMatchOrders() public {
-        
     }
 }

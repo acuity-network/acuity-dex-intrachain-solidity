@@ -48,6 +48,7 @@ contract AcuityDexIntrachain {
      * @dev Sell orders have been purchased by a buyer.
      */
     event MatchingCompleted(address sellAsset, address buyAsset, address buyer, uint sellValue, uint buyValue);
+
     /**
      * @dev
      */
@@ -56,12 +57,22 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    error NoValue();
+    error InvalidAddress();
 
     /**
      * @dev
      */
-    error HasValue();
+    error ValueZero();
+
+    /**
+     * @dev
+     */
+    error ValueNonZero();
+
+    /**
+     * @dev
+     */
+    error PriceZero();
 
     /**
      * @dev
@@ -94,9 +105,9 @@ contract AcuityDexIntrachain {
     error WithdrawalFailed(address asset, address to, uint value);
 
     /**
-     * @dev
+     * @dev Ensure the asset is valid.
      */
-    modifier validAsset(address asset) {
+    modifier assetValid(address asset) {
         if (asset == msg.sender || asset == address(this)) revert InvalidAsset();
         _;
     }
@@ -104,44 +115,49 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    modifier notBaseAsset(address asset) {
-        if (asset == address(0)) revert InvalidAsset();
+    modifier addressValid(address _address) {
+        if (_address == address(this)) revert InvalidAddress();
         _;
     }
 
     /**
-     * @dev Revert if no value is sent.
+     * @dev Ensure the call has value.
      */
-    modifier hasMsgValue() {
-        if (msg.value == 0) revert NoValue();
+    modifier msgValueNonZero() {
+        if (msg.value == 0) revert ValueZero();
         _;
     }
 
     /**
-     * @dev Revert if no value is sent.
+     * @dev Ensure value is non-zero.
      */
-    modifier hasValue(uint value) {
-        if (value == 0) revert NoValue();
+    modifier valueNonZero(uint value) {
+        if (value == 0) revert ValueZero();
+        _;
+    }
+
+    /**
+     * @dev Ensure price is non-zero.
+     */
+    modifier priceNonZero(uint price) {
+        if (price == 0) revert PriceZero();
         _;
     }
 
     /**
      * @dev Check sell and buy assets are not the same.
      */
-    modifier assetsDifferent(address sellAsset, address buyAsset) {
-        if (sellAsset == buyAsset) {
-            revert AssetsNotDifferent();
-        }
+    modifier assetPairValid(address sellAsset, address buyAsset) {
+        if (sellAsset == msg.sender || sellAsset == address(this)) revert InvalidAsset();
+        if (buyAsset == msg.sender || buyAsset == address(this)) revert InvalidAsset();
+        if (sellAsset == buyAsset) revert AssetsNotDifferent();
         _;
     }
 
     /**
      * @dev
      */
-    function _depositERC20(address asset, uint value) internal
-        validAsset(asset)
-        notBaseAsset(asset)
-    {
+    function _depositERC20(address asset, uint value) internal {
         (bool success, bytes memory data) = asset.call(abi.encodeWithSelector(ERC20.transferFrom.selector, msg.sender, address(this), value));
         if (success && data.length != 0) success = abi.decode(data, (bool));
         if (!success) revert DepositFailed(asset, msg.sender, value);
@@ -152,9 +168,30 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function _withdraw(address asset, address to, uint value) internal
-        validAsset(asset)
-    {
+    function _deposit(address asset, uint value) internal {
+        if (asset == address(0)) {
+            // Did the buyer pay enough?
+            if (value > msg.value) {
+                revert();
+            }
+            // Log deposit.
+            emit Deposit(address(0), msg.sender, msg.value);
+            // Send the buyer's change back.
+            if (value < msg.value) {
+                _withdraw(address(0), msg.sender, msg.value - value);
+            }
+        }
+        else {
+            if (msg.value != 0) revert ValueNonZero();
+            // Transfer the buy assets from the buyer to this contract.
+            _depositERC20(asset, value);
+        }
+    }
+
+    /**
+     * @dev
+     */
+    function _withdraw(address asset, address to, uint value) internal {
         // Default to withdrawing to sender.
         if (to == address(0)) to = msg.sender;
         bool success;
@@ -188,7 +225,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Deposit base coin.
      */
-    function deposit() external payable hasMsgValue {
+    function deposit() external payable msgValueNonZero {
         // Update balance.
         accountAssetBalance[msg.sender][address(0)] += msg.value;
         // Log event.
@@ -197,14 +234,21 @@ contract AcuityDexIntrachain {
 
     // ERC1155?
 
-    function depositERC20(address asset, uint value) external hasValue(value) {
+    function depositERC20(address asset, uint value) external
+        assetValid(asset)
+        valueNonZero(value)
+    {
         // Update balance.
         accountAssetBalance[msg.sender][asset] += value;
         // Transfer value.
         _depositERC20(asset, value);
     }
 
-    function withdraw(address asset, address to, uint value) external hasValue(value) {
+    function withdraw(address asset, address to, uint value) external
+        assetValid(asset)
+        addressValid(to)
+        valueNonZero(value)
+    {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
         if (assetBalance[asset] < value) revert InsufficientBalance();
@@ -214,12 +258,15 @@ contract AcuityDexIntrachain {
         _withdraw(asset, to, value);
     }
 
-    function withdrawAll(address asset, address to) external {
+    function withdrawAll(address asset, address to) external
+        assetValid(asset)
+        addressValid(to)
+    {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Get asset balance.
         uint value = assetBalance[asset];
         // Check there is a balance.
-        if (value == 0) revert NoValue();
+        if (value == 0) revert ValueZero();
         // Delete asset balance.
         delete assetBalance[asset];
         // Transfer value.
@@ -229,10 +276,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add value to an order.
      */
-    function _addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) internal
-        assetsDifferent(sellAsset, buyAsset)
-        hasValue(value)
-    {
+    function _addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) internal {
         // Sell value of each sell order for this pair.
         mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
         // Determine the orderId.
@@ -247,7 +291,7 @@ contract AcuityDexIntrachain {
             return;
         }
         // Set the order value.
-        orderValue[orderId] = value;  // 20,000
+        orderValue[orderId] = value;
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Find correct place in linked list to insert order.
@@ -263,36 +307,46 @@ contract AcuityDexIntrachain {
             next = orderLL[prev];
         }
         // Insert into linked list.
-        orderLL[prev] = orderId;  // 2,900
-        orderLL[orderId] = next;  // 20,000
+        orderLL[prev] = orderId;
+        orderLL[orderId] = next;
     }
 
     /**
      * @dev Add value to an order.
-     *
-     * Typical storage gas for new order: 45,800
      */
-    function addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) external {
+    function addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+        valueNonZero(value)
+    {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
         if (assetBalance[sellAsset] < value) revert InsufficientBalance();
         // Add order.
         _addOrderValue(sellAsset, buyAsset, price, value);
         // Update Balance.
-        assetBalance[sellAsset] -= value;  // 2,900
+        assetBalance[sellAsset] -= value;
     }
 
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderValueWithDeposit(address buyAsset, uint96 price) external payable {
+    function addOrderValueWithDeposit(address buyAsset, uint96 price) external payable
+        assetValid(buyAsset)
+        priceNonZero(price)
+        msgValueNonZero
+    {
         _addOrderValue(address(0), buyAsset, price, msg.value);
     }
 
     /**
      * @dev Add sell order of ERC20 asset.
      */
-    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 price, uint value) external {
+    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 price, uint value) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+        valueNonZero(value)
+    {
         // Add the sell order.
         _addOrderValue(sellAsset, buyAsset, price, value);
         // Transfer the assets from the seller to this contract.
@@ -313,7 +367,6 @@ contract AcuityDexIntrachain {
     }
 
     function _removeOrder(address sellAsset, address buyAsset, uint96 price) internal
-        assetsDifferent(sellAsset, buyAsset)
         returns (uint value)
     {
         // Sell value of each sell order for this pair.
@@ -334,19 +387,24 @@ contract AcuityDexIntrachain {
         emit OrderValueRemoved(sellAsset, buyAsset, orderId, value);
     }
 
-    function removeOrder(address sellAsset, address buyAsset, uint96 price) external {
+    function removeOrder(address sellAsset, address buyAsset, uint96 price) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+    {
         uint value = _removeOrder(sellAsset, buyAsset, price);
         accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 price, address to) external {
+    function removeOrderAndWithdraw(address sellAsset, address buyAsset, uint96 price, address to) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+        addressValid(to)
+    {
         uint value = _removeOrder(sellAsset, buyAsset, price);
         _withdraw(sellAsset, to, value);
     }
 
     function _removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) internal
-        assetsDifferent(sellAsset, buyAsset)
-        hasValue(valueLimit)
         returns (uint valueRemoved)  // Is this neccessary?
     {
         // Determine the orderId.
@@ -375,18 +433,29 @@ contract AcuityDexIntrachain {
         emit OrderValueRemoved(sellAsset, buyAsset, orderId, valueRemoved);
     }
 
-    function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external {
+    function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+        valueNonZero(valueLimit)
+    {
         uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
         accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit, address to) external {
+    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit, address to) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+        valueNonZero(valueLimit)
+        addressValid(to)
+    {
         uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
         _withdraw(sellAsset, to, value);
     }
 
     function adjustOrderPrice(address sellAsset, address buyAsset, uint96 oldPrice, uint96 newPrice) external
-        assetsDifferent(sellAsset, buyAsset)
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(oldPrice)
+        priceNonZero(newPrice)
      {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
@@ -659,7 +728,7 @@ contract AcuityDexIntrachain {
     }
 
     function matchBuyOrder(BuyOrder calldata order) internal 
-        assetsDifferent(order.sellAsset, order.buyAsset)
+        assetPairValid(order.sellAsset, order.buyAsset)
         returns (uint sellValue, uint buyValue)
     {
         if (order.orderType == BuyOrderType.SellValueExact) {
@@ -694,7 +763,9 @@ contract AcuityDexIntrachain {
     /**
      * @dev Buy with balance and withdraw.
      */
-    function buyAndWithdraw(BuyOrder calldata order, address to) external {
+    function buyAndWithdraw(BuyOrder calldata order, address to) external
+        addressValid(to)
+    {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Check there is sufficient balance.
@@ -706,26 +777,6 @@ contract AcuityDexIntrachain {
         _withdraw(order.sellAsset, to, sellValue);
     }
 
-    function depositAsset(address asset, uint value) internal {
-        if (asset == address(0)) {
-            // Did the buyer pay enough?
-            if (value > msg.value) {
-                revert();
-            }
-            // Log deposit.
-            emit Deposit(address(0), msg.sender, msg.value);
-            // Send the buyer's change back.
-            if (value < msg.value) {
-                _withdraw(address(0), msg.sender, msg.value - value);
-            }
-        }
-        else {
-            if (msg.value != 0) revert HasValue();
-            // Transfer the buy assets from the buyer to this contract.
-            _depositERC20(asset, value);
-        }
-    }
-
     /**
      * @dev Buy with base coin.
      */
@@ -735,17 +786,19 @@ contract AcuityDexIntrachain {
         // Update buyer's sell asset balance.
         accountAssetBalance[msg.sender][order.sellAsset] += sellValue;
         // Transfer the buy assets from the buyer to this contract.
-        depositAsset(order.buyAsset, buyValue);
+        _deposit(order.buyAsset, buyValue);
     }
 
     /**
      * @dev Buy with base coin.
      */
-    function buyWithDepositAndWithdraw(BuyOrder calldata order, address to) external payable {
+    function buyWithDepositAndWithdraw(BuyOrder calldata order, address to) external payable
+        addressValid(to)
+    {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Transfer the buy assets from the buyer to this contract.
-        depositAsset(order.buyAsset, buyValue);
+        _deposit(order.buyAsset, buyValue);
         // Transfer the sell asset.
         _withdraw(order.sellAsset, to, sellValue);
     }
@@ -771,7 +824,7 @@ contract AcuityDexIntrachain {
      * @dev
      */
     function getOrderBook(address sellAsset, address buyAsset, uint maxOrders) external view
-        assetsDifferent(sellAsset, buyAsset)
+        assetPairValid(sellAsset, buyAsset)
         returns (Order[] memory orderBook)
     {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
@@ -812,7 +865,7 @@ contract AcuityDexIntrachain {
      * @dev
      */
     function getOrderValue(address sellAsset, address buyAsset, address seller, uint96 price) external view
-        assetsDifferent(sellAsset, buyAsset)
+        assetPairValid(sellAsset, buyAsset)
         returns (uint value)
     {
         bytes32 orderId = encodeOrderId(seller, price);
