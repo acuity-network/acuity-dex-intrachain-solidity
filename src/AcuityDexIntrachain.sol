@@ -12,7 +12,7 @@ contract AcuityDexIntrachain {
      */
     mapping (address => mapping (address => mapping (bytes32 => bytes32))) sellBuyOrderIdLL;
 
-    mapping (address => mapping (address => mapping (bytes32 => uint))) sellBuyOrderIdValue;
+    mapping (address => mapping (address => mapping (bytes32 => bytes32))) sellBuyOrderIdValueTimeout;
 
     /**
      * @dev
@@ -23,26 +23,36 @@ contract AcuityDexIntrachain {
      * @dev
      */
     event Withdrawal(address asset, address account, address to, uint value);
-    
-    /**
-     * @dev
-     */
-    event OrderValueAdded(address sellAsset, address buyAsset, bytes32 orderId, uint value);
 
     /**
      * @dev
      */
-    event OrderValueRemoved(address sellAsset, address buyAsset, bytes32 orderId, uint value);
+    event OrderAdded(address sellAsset, address buyAsset, bytes32 orderId, uint value, uint timeout);
 
     /**
      * @dev
      */
-    event OrderPartialMatch(address sellAsset, address buyAsset, bytes32 orderId, uint value);
+    event OrderRemoved(address sellAsset, address buyAsset, bytes32 orderId, uint value);
+
+    /**
+     * @dev
+     */
+    event OrderValueAdded(address sellAsset, address buyAsset, bytes32 orderId, uint value, uint timeout);
+
+    /**
+     * @dev
+     */
+    event OrderValueRemoved(address sellAsset, address buyAsset, bytes32 orderId, uint value, uint timeout);
 
     /**
      * @dev
      */
     event OrderFullMatch(address sellAsset, address buyAsset, bytes32 orderId, uint value);
+
+    /**
+     * @dev
+     */
+    event OrderPartialMatch(address sellAsset, address buyAsset, bytes32 orderId, uint value);
 
     /**
      * @dev Sell orders have been purchased by a buyer.
@@ -68,6 +78,11 @@ contract AcuityDexIntrachain {
      * @dev
      */
     error ValueNonZero();
+
+    /**
+     * @dev
+     */
+    error TimeoutExpired();
 
     /**
      * @dev
@@ -133,6 +148,14 @@ contract AcuityDexIntrachain {
      */
     modifier valueNonZero(uint value) {
         if (value == 0) revert ValueZero();
+        _;
+    }
+
+    /**
+     * @dev Ensure timeout has not expired.
+     */
+    modifier timeoutNotExpired(uint32 timeout) {
+        if (timeout <= block.timestamp) revert TimeoutExpired();
         _;
     }
 
@@ -222,6 +245,16 @@ contract AcuityDexIntrachain {
         price = uint96(uint(orderId));
     }
 
+    function encodeValueTimeout(uint224 value, uint32 timeout) internal pure returns (bytes32 valueTimeout) {
+        if (timeout == 0) timeout = type(uint32).max;
+        valueTimeout = bytes32((uint(value) << 32) | uint(timeout));
+    }
+
+    function decodeValueTimeout(bytes32 valueTimeout) internal pure returns (uint224 value, uint32 timeout) {
+        value = uint224(uint(valueTimeout) >> 32);
+        timeout = uint32(uint(valueTimeout));
+    }
+
     /**
      * @dev Deposit base coin.
      */
@@ -276,22 +309,22 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add value to an order.
      */
-    function _addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) internal {
+    function _addOrderValue(address sellAsset, address buyAsset, uint96 price, uint224 value, uint32 timeout) internal {
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
-        // Log event.
-        emit OrderValueAdded(sellAsset, buyAsset, orderId, value);
         // Get the old order value.
-        uint oldValue = orderValue[orderId];
+        (uint224 oldValue,) = decodeValueTimeout(orderValueTimeout[orderId]);
         // Does this order already exist?
         if (oldValue > 0) {
-            orderValue[orderId] = oldValue + value;
+            orderValueTimeout[orderId] = encodeValueTimeout(oldValue + value, timeout);
+            // Log event.
+            emit OrderValueAdded(sellAsset, buyAsset, orderId, value, timeout);
             return;
         }
         // Set the order value.
-        orderValue[orderId] = value;
+        orderValueTimeout[orderId] = encodeValueTimeout(value, timeout);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Find correct place in linked list to insert order.
@@ -309,21 +342,24 @@ contract AcuityDexIntrachain {
         // Insert into linked list.
         orderLL[prev] = orderId;
         orderLL[orderId] = next;
+        // Log event.
+        emit OrderAdded(sellAsset, buyAsset, orderId, value, timeout);
     }
 
     /**
      * @dev Add value to an order.
      */
-    function addOrderValue(address sellAsset, address buyAsset, uint96 price, uint value) external
+    function addOrderValue(address sellAsset, address buyAsset, uint96 price, uint224 value, uint32 timeout) external
         assetPairValid(sellAsset, buyAsset)
         priceNonZero(price)
         valueNonZero(value)
+        timeoutNotExpired(timeout)
     {
         mapping(address => uint256) storage assetBalance = accountAssetBalance[msg.sender];
         // Check there is sufficient balance.
         if (assetBalance[sellAsset] < value) revert InsufficientBalance();
         // Add order.
-        _addOrderValue(sellAsset, buyAsset, price, value);
+        _addOrderValue(sellAsset, buyAsset, price, value, timeout);
         // Update Balance.
         assetBalance[sellAsset] -= value;
     }
@@ -331,24 +367,26 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add sell order of base coin.
      */
-    function addOrderValueWithDeposit(address buyAsset, uint96 price) external payable
+    function addOrderValueWithDeposit(address buyAsset, uint96 price, uint32 timeout) external payable
         assetValid(buyAsset)
         priceNonZero(price)
         msgValueNonZero
+        timeoutNotExpired(timeout)
     {
-        _addOrderValue(address(0), buyAsset, price, msg.value);
+        _addOrderValue(address(0), buyAsset, price, uint224(msg.value), timeout);
     }
 
     /**
      * @dev Add sell order of ERC20 asset.
      */
-    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 price, uint value) external
+    function addOrderValueWithDepositERC20(address sellAsset, address buyAsset, uint96 price, uint224 value, uint32 timeout) external
         assetPairValid(sellAsset, buyAsset)
         priceNonZero(price)
         valueNonZero(value)
+        timeoutNotExpired(timeout)
     {
         // Add the sell order.
-        _addOrderValue(sellAsset, buyAsset, price, value);
+        _addOrderValue(sellAsset, buyAsset, price, value, timeout);
         // Transfer the assets from the seller to this contract.
         _depositERC20(sellAsset, value);
     }
@@ -370,21 +408,21 @@ contract AcuityDexIntrachain {
         returns (uint value)
     {
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Get the value of the order being removed.
-        value = orderValue[orderId];
+        (value,) = decodeValueTimeout(orderValueTimeout[orderId]);
         // Check if the order exists.
         if (value == 0) {
             revert OrderNotFound();
         }
         // Delete the order value.
-        delete orderValue[orderId];
+        delete orderValueTimeout[orderId];
         // Delete the order from the linked list.
         deleteOrderLL(sellAsset, buyAsset, orderId);
         // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, orderId, value);
+        emit OrderRemoved(sellAsset, buyAsset, orderId, value);
     }
 
     function removeOrder(address sellAsset, address buyAsset, uint96 price) external
@@ -404,15 +442,15 @@ contract AcuityDexIntrachain {
         _withdraw(sellAsset, to, value);
     }
 
-    function _removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) internal
+    function _removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint224 valueLimit, uint32 timeout) internal
         returns (uint valueRemoved)  // Is this neccessary?
     {
         // Determine the orderId.
         bytes32 orderId = encodeOrderId(price);
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Get the value of the order being removed.
-        uint value = orderValue[orderId];
+        (uint224 value,) = decodeValueTimeout(orderValueTimeout[orderId]);
         // Check if the order exists.
         if (value == 0) {
             revert OrderNotFound();
@@ -421,34 +459,38 @@ contract AcuityDexIntrachain {
         if (valueLimit >= value) {
             valueRemoved = value;
             // Delete the order value.
-            delete orderValue[orderId];
+            delete orderValueTimeout[orderId];
             // Delete the order from the linked list.
             deleteOrderLL(sellAsset, buyAsset, orderId);
+            // Log event.
+            emit OrderRemoved(sellAsset, buyAsset, orderId, valueRemoved);
         }
         else {
-            orderValue[orderId] = value - valueLimit;
+            orderValueTimeout[orderId] = encodeValueTimeout(value - valueLimit, timeout);
             valueRemoved = valueLimit;
+            // Log event.
+            emit OrderValueRemoved(sellAsset, buyAsset, orderId, valueRemoved, timeout);
         }
-        // Log event.
-        emit OrderValueRemoved(sellAsset, buyAsset, orderId, valueRemoved);
     }
 
-    function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint valueLimit) external
+    function removeOrderValue(address sellAsset, address buyAsset, uint96 price, uint224 valueLimit, uint32 timeout) external
         assetPairValid(sellAsset, buyAsset)
         priceNonZero(price)
         valueNonZero(valueLimit)
+        timeoutNotExpired(timeout)
     {
-        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
+        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit, timeout);
         accountAssetBalance[msg.sender][sellAsset] += value;
     }
     
-    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint valueLimit, address to) external
+    function removeOrderValueAndWithdraw(address sellAsset, address buyAsset, uint96 price, uint224 valueLimit, uint32 timeout, address to) external
         assetPairValid(sellAsset, buyAsset)
         priceNonZero(price)
         valueNonZero(valueLimit)
+        timeoutNotExpired(timeout)
         addressValid(to)
     {
-        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit);
+        uint value = _removeOrderValue(sellAsset, buyAsset, price, valueLimit, timeout);
         _withdraw(sellAsset, to, value);
     }
 
@@ -460,12 +502,12 @@ contract AcuityDexIntrachain {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
 
         bytes32 oldOrder = encodeOrderId(oldPrice);
         bytes32 newOrder = encodeOrderId(newPrice);
 
-        if (orderValue[oldOrder] == 0) {
+        if (orderValueTimeout[oldOrder] == 0) {
             revert OrderNotFound();
         }
 
@@ -507,8 +549,8 @@ contract AcuityDexIntrachain {
         }
 
         delete orderLL[oldOrder];
-        orderValue[newOrder] = orderValue[oldOrder];
-        delete orderValue[oldOrder];
+        orderValueTimeout[newOrder] = orderValueTimeout[oldOrder];
+        delete orderValueTimeout[oldOrder];
     }
 
     function getAssetBigUnit(address asset) internal view
@@ -522,7 +564,7 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function matchSellExact(address sellAsset, address buyAsset, uint sellValue, uint buyLimit) internal
+    function matchSellExact(address sellAsset, address buyAsset, uint224 sellValue, uint buyLimit) internal
         returns (uint buyValue)
     {
         // Determine the value of 1 big unit of sell asset.
@@ -530,16 +572,30 @@ contract AcuityDexIntrachain {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
         while (sellValue != 0) {
             // Check if we have run out of orders.
             if (orderId == 0) revert NoMatch();
-            // Get order account, price and value.
+            // Get order account, price, value and timeout.
             (address sellAccount, uint price) = decodeOrderId(orderId);
-            uint orderSellValue = orderValue[orderId];
+            (uint224 orderSellValue, uint32 timeout) = decodeValueTimeout(orderValueTimeout[orderId]);
+            // Has the order timed out?
+            if (timeout <= block.timestamp) {
+                // Refund the seller.
+                accountAssetBalance[sellAccount][sellAsset] += orderSellValue;
+                // Log event.
+                emit OrderRemoved(sellAsset, buyAsset, orderId, orderSellValue);
+                // Delete the order.
+                bytes32 next = orderLL[orderId];
+                delete orderLL[orderId];
+                delete orderValueTimeout[orderId];
+                orderId = next;
+                // Goto next order.
+                continue;
+            }
             // Is there a full or partial match?
             if (sellValue >= orderSellValue) {
                 // Full match.
@@ -555,7 +611,7 @@ contract AcuityDexIntrachain {
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
-                delete orderValue[orderId];
+                delete orderValueTimeout[orderId];
                 orderId = next;
             }
             else {
@@ -567,7 +623,7 @@ contract AcuityDexIntrachain {
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += partialBuyValue;
                 // Update order value. Will not be 0.
-                orderValue[orderId] = orderSellValue - sellValue;
+                orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - sellValue, timeout);
                 // Update remaining sell value.
                 sellValue = 0;
                 // Log the event.
@@ -588,16 +644,30 @@ contract AcuityDexIntrachain {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
         while (buyValue != 0) {
             // Check if we have run out of orders.
             if (orderId == 0) revert NoMatch();
-            // Get order account, price and value.
+            // Get order account, price, value and timeout.
             (address sellAccount, uint price) = decodeOrderId(orderId);
-            uint orderSellValue = orderValue[orderId];
+            (uint224 orderSellValue, uint32 timeout) = decodeValueTimeout(orderValueTimeout[orderId]);
+            // Has the order timed out?
+            if (timeout <= block.timestamp) {
+                // Refund the seller.
+                accountAssetBalance[sellAccount][sellAsset] += orderSellValue;
+                // Log event.
+                emit OrderRemoved(sellAsset, buyAsset, orderId, orderSellValue);
+                // Delete the order.
+                bytes32 next = orderLL[orderId];
+                delete orderLL[orderId];
+                delete orderValueTimeout[orderId];
+                orderId = next;
+                // Goto next order.
+                continue;
+            }
             // Calculate how much buy asset it will take to buy this order.
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
@@ -613,13 +683,13 @@ contract AcuityDexIntrachain {
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
-                delete orderValue[orderId];
+                delete orderValueTimeout[orderId];
                 orderId = next;
             }
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint partialSellValue = (buyValue * sellAssetBigUnit) / price;
+                uint224 partialSellValue = uint224((buyValue * sellAssetBigUnit) / price);
                 // Update sell balance.
                 sellValue += partialSellValue;
                 // Pay seller.
@@ -631,11 +701,11 @@ contract AcuityDexIntrachain {
                     // Delete the order.
                     bytes32 next = orderLL[orderId];
                     delete orderLL[orderId];
-                    delete orderValue[orderId];
+                    delete orderValueTimeout[orderId];
                     orderId = next;
                 }
                 else {
-                    orderValue[orderId] = orderSellValue;
+                    orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue, timeout);
                 }
                 // Log the event.
                 emit OrderPartialMatch(sellAsset, buyAsset, orderId, partialSellValue);
@@ -660,17 +730,31 @@ contract AcuityDexIntrachain {
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
         // Sell value of each sell order for this pair.
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
         while (orderId != 0 && buyLimit != 0 && sellLimit != 0) {
-            // Get order account, price.
+            // Get order account, price, value and timeout.
             (address sellAccount, uint price) = decodeOrderId(orderId);
+            (uint224 orderSellValue, uint32 timeout) = decodeValueTimeout(orderValueTimeout[orderId]);
+            // Has the order timed out?
+            if (timeout <= block.timestamp) {
+                // Refund the seller.
+                accountAssetBalance[sellAccount][sellAsset] += orderSellValue;
+                // Log event.
+                emit OrderRemoved(sellAsset, buyAsset, orderId, orderSellValue);
+                // Delete the order.
+                bytes32 next = orderLL[orderId];
+                delete orderLL[orderId];
+                delete orderValueTimeout[orderId];
+                orderId = next;
+                // Goto next order.
+                continue;
+            }
             // Check if we have hit the price limit.
             if (price > priceLimit) break;
             // Calculate how much buy asset it will take to buy this order.
-            uint orderSellValue = orderValue[orderId];
             uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
             // Is there a full or partial match?
             if (sellLimit >= orderSellValue && buyLimit >= orderBuyValue) {
@@ -688,13 +772,13 @@ contract AcuityDexIntrachain {
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
-                delete orderValue[orderId];
+                delete orderValueTimeout[orderId];
                 orderId = next;
             }
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint sellValueLimit = (buyLimit * sellAssetBigUnit) / price;
+                uint224 sellValueLimit = uint224((buyLimit * sellAssetBigUnit) / price);
                 // Update buyer balances.
                 sellValue += sellValueLimit;
                 buyValue += buyLimit;
@@ -703,7 +787,7 @@ contract AcuityDexIntrachain {
                 // Pay seller.
                 accountAssetBalance[sellAccount][buyAsset] += buyLimit;
                 // Update order value.
-                orderValue[orderId] = orderSellValue - sellValueLimit; // TODO: ensure this isn't 0
+                orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - sellValueLimit, timeout); // TODO: ensure this isn't 0
                 // Log the event.
                 emit OrderPartialMatch(sellAsset, buyAsset, orderId, sellValueLimit);
                 // Exit.
@@ -722,7 +806,7 @@ contract AcuityDexIntrachain {
         BuyOrderType orderType;
         address sellAsset;
         address buyAsset;
-        uint sellValue;
+        uint224 sellValue;
         uint buyValue;
         uint priceLimit;
     }
@@ -817,6 +901,7 @@ contract AcuityDexIntrachain {
         address account;
         uint price;
         uint value;
+        uint32 timeout;
     }
 
     // paging?
@@ -828,7 +913,7 @@ contract AcuityDexIntrachain {
         returns (Order[] memory orderBook)
     {
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
-        mapping (bytes32 => uint) storage orderValue = sellBuyOrderIdValue[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
         uint orderCount = 0;
         
         bytes32 orderId = orderLL[0];
@@ -849,12 +934,15 @@ contract AcuityDexIntrachain {
 
         orderId = orderLL[0];
         for (uint i = 0; i < orderCount; i++) {
-            (address sellAccount, uint96 price) = decodeOrderId(orderId);
+            // Get order account, price, value and timeout.
+            (address account, uint price) = decodeOrderId(orderId);
+            (uint value, uint32 timeout) = decodeValueTimeout(orderValueTimeout[orderId]);
             
             orderBook[i] = Order({
-                account: sellAccount,
+                account: account,
                 price: price,
-                value: orderValue[orderId] 
+                value: value, 
+                timeout: timeout
             });
 
             orderId = orderLL[orderId];
@@ -864,11 +952,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
-    function getOrderValue(address sellAsset, address buyAsset, address seller, uint96 price) external view
+    function getOrderValueTimeout(address sellAsset, address buyAsset, address seller, uint96 price) external view
         assetPairValid(sellAsset, buyAsset)
-        returns (uint value)
+        returns (uint value, uint32 timeout)
     {
         bytes32 orderId = encodeOrderId(seller, price);
-        value = sellBuyOrderIdValue[sellAsset][buyAsset][orderId];
+        (value, timeout) = decodeValueTimeout(sellBuyOrderIdValueTimeout[sellAsset][buyAsset][orderId]);
     }
 }
