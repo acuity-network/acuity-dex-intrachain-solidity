@@ -587,48 +587,45 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     function testAddOrderWithDeposit() public {
         uint32 t = uint32(block.timestamp) + 1;
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDeposit{value: 90}(address(this), 82, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(this), 82, 90, t));
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDeposit{value: 90}(address(harness), 82, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(harness), 82, 90, t));
         vm.expectRevert(PriceZero.selector);
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 0, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 0, 90, t));
         vm.expectRevert(ValueZero.selector);
-        harness.addOrderValueWithDeposit{value: 0}(address(8), 82, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 82, 0, t));
         vm.expectRevert(TimeoutExpired.selector);
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 82, t - 1);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 82, 90, t - 1));
 
         vm.expectEmit(false, false, false, true);
         emit OrderAdded(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90, t);
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t);
-    }
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t));
 
-    function testAddOrderWithDepositERC20() public {
-        uint32 t = uint32(block.timestamp) + 1;
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDepositERC20(so(address(this), address(dummyToken), 82, 90, t));
+        harness.addOrderValueWithDeposit(so(address(this), address(dummyToken), 82, 90, t));
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDepositERC20(so(address(harness), address(dummyToken), 82, 90, t));
+        harness.addOrderValueWithDeposit(so(address(harness), address(dummyToken), 82, 90, t));
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(this), 82, 90, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(this), 82, 90, t));
         vm.expectRevert(InvalidAsset.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(harness), 82, 90, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(harness), 82, 90, t));
         vm.expectRevert(AssetsNotDifferent.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(dummyToken), 82, 90, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(dummyToken), 82, 90, t));
         vm.expectRevert(PriceZero.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(8), 0, 90, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(8), 0, 90, t));
         vm.expectRevert(ValueZero.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(8), 82, 0, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(8), 82, 0, t));
         vm.expectRevert(TimeoutExpired.selector);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(8), 82, 90, t - 1));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(8), 82, 90, t - 1));
 
         uint oldBalance = dummyToken.balanceOf(address(this));
         bytes memory error = abi.encodeWithSelector(DepositFailed.selector, address(dummyToken), address(this), oldBalance + 1);
         vm.expectRevert(error);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(8), 18, uint224(oldBalance + 1), t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(8), 18, uint224(oldBalance + 1), t));
 
         vm.expectEmit(false, false, false, true);
         emit OrderAdded(address(dummyToken), address(8), harness.encodeOrderIdHarness(address(this), 18), 90, t);
-        harness.addOrderValueWithDepositERC20(so(address(dummyToken), address(8), 18, 90, t));
+        harness.addOrderValueWithDeposit(so(address(dummyToken), address(8), 18, 90, t));
         uint newBalance = dummyToken.balanceOf(address(this));
         assertEq(oldBalance - newBalance, 90);
     }
@@ -636,7 +633,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     function test_RemoveOrder() public {
         uint32 t = uint32(block.timestamp) + 1;
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t));
         Order[] memory orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 1);
         assertEq(orderBook[0].account, address(this));
@@ -650,11 +647,11 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         orderBook = harness.getOrderBook(address(7), address(8), 0);
         assertEq(orderBook.length, 0);
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t);
-        harness.addOrderValueWithDeposit{value: 91}(address(8), 17, t + 1);
-        harness.addOrderValueWithDeposit{value: 94}(address(8), 16, t + 2);
-        harness.addOrderValueWithDeposit{value: 93}(address(8), 180972, t + 3);
-        harness.addOrderValueWithDeposit{value: 946}(address(8), 180973, t + 4);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t));
+        harness.addOrderValueWithDeposit{value: 91}(so(address(0), address(8), 17, 91, t + 1));
+        harness.addOrderValueWithDeposit{value: 94}(so(address(0), address(8), 16, 94, t + 2));
+        harness.addOrderValueWithDeposit{value: 93}(so(address(0), address(8), 180972, 93, t + 3));
+        harness.addOrderValueWithDeposit{value: 946}(so(address(0), address(8), 180973, 946, t + 4));
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 5);
         assertEq(orderBook[0].account, address(this));
@@ -763,7 +760,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         vm.expectRevert(PriceZero.selector);
         harness.removeOrder(so(address(7), address(8), 0));
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, uint32(block.timestamp) + 1);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, uint32(block.timestamp) + 1));
         uint oldBalance = harness.getBalance(address(0), address(this));
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -788,7 +785,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         vm.expectRevert(InvalidAddress.selector);
         harness.removeOrderAndWithdraw(so(address(7), address(8), 82), address(harness));
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, uint32(block.timestamp) + 1);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, uint32(block.timestamp) + 1));
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -800,7 +797,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
     function test_RemoveOrderValue() public {
         uint32 t = uint32(block.timestamp) + 1;
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t));
         Order[] memory orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 1);
         assertEq(orderBook[0].account, address(this));
@@ -837,7 +834,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 0);
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t + 4);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t + 4));
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 1);
         assertEq(orderBook[0].account, address(this));
@@ -852,11 +849,11 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 0);
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t + 5);
-        harness.addOrderValueWithDeposit{value: 91}(address(8), 17, t + 6);
-        harness.addOrderValueWithDeposit{value: 94}(address(8), 16, t + 7);
-        harness.addOrderValueWithDeposit{value: 93}(address(8), 180972, t + 8);
-        harness.addOrderValueWithDeposit{value: 946}(address(8), 180973, t + 9);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t + 5));
+        harness.addOrderValueWithDeposit{value: 91}(so(address(0), address(8), 17, 91, t + 6));
+        harness.addOrderValueWithDeposit{value: 94}(so(address(0), address(8), 16, 94, t + 7));
+        harness.addOrderValueWithDeposit{value: 93}(so(address(0), address(8), 180972, 93, t + 8));
+        harness.addOrderValueWithDeposit{value: 946}(so(address(0), address(8), 180973, 946, t + 9));
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 5);
         assertEq(orderBook[0].account, address(this));
@@ -995,7 +992,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         vm.expectRevert(TimeoutExpired.selector);
         harness.removeOrderValue(so(address(7), address(8), 82, 90, t - 1));
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t + 1);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t + 1));
         uint oldBalance = harness.getBalance(address(0), address(this));
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
@@ -1026,7 +1023,7 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         vm.expectRevert(InvalidAddress.selector);
         harness.removeOrderValueAndWithdraw(so(address(7), address(8), 82, 90, t), address(harness));
 
-        harness.addOrderValueWithDeposit{value: 90}(address(8), 18, t + 1);
+        harness.addOrderValueWithDeposit{value: 90}(so(address(0), address(8), 18, 90, t + 1));
         uint oldBalance = address(this).balance;
         vm.expectEmit(false, false, false, true);
         emit OrderValueRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 80, t + 2);

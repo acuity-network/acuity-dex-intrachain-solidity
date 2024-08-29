@@ -6,11 +6,14 @@ import "./ERC20.sol";
 contract AcuityDexIntrachain {
 
     struct SellOrder {
+        // --key----
         address sellAsset;
         address buyAsset;
         uint96 price;
+        // --value--
         uint224 value;
         uint32 timeout;
+        // ---------
     }
 
     enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
@@ -333,7 +336,7 @@ contract AcuityDexIntrachain {
     /**
      * @dev Add value to an order.
      */
-    function _addOrderValue(SellOrder memory sellOrder) internal {
+    function _addOrderValue(SellOrder calldata sellOrder) internal {
         // Sell value of each sell order for this pair.
         mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[sellOrder.sellAsset][sellOrder.buyAsset];
         // Determine the orderId.
@@ -391,28 +394,9 @@ contract AcuityDexIntrachain {
     }
 
     /**
-     * @dev Add sell order of base coin.
-     */
-    function addOrderValueWithDeposit(address buyAsset, uint96 price, uint32 timeout) external payable
-        assetValid(buyAsset)
-        priceNonZero(price)
-        msgValueNonZero
-        timeoutNotExpired(timeout)
-    {
-        SellOrder memory sellOrder = SellOrder({
-            sellAsset: address(0),
-            buyAsset: buyAsset,
-            price: price,
-            value: uint224(msg.value),
-            timeout: timeout
-        });
-        _addOrderValue(sellOrder);
-    }
-
-    /**
      * @dev Add sell order of ERC20 asset.
      */
-    function addOrderValueWithDepositERC20(SellOrder calldata sellOrder) external
+    function addOrderValueWithDeposit(SellOrder calldata sellOrder) external payable
         assetPairValid(sellOrder.sellAsset, sellOrder.buyAsset)
         priceNonZero(sellOrder.price)
         valueNonZero(sellOrder.value)
@@ -421,7 +405,7 @@ contract AcuityDexIntrachain {
         // Add the sell order.
         _addOrderValue(sellOrder);
         // Transfer the assets from the seller to this contract.
-        _depositERC20(sellOrder.sellAsset, sellOrder.value);
+        _deposit(sellOrder.sellAsset, sellOrder.value);
     }
 
     function deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
@@ -527,7 +511,25 @@ contract AcuityDexIntrachain {
         _withdraw(sellOrder.sellAsset, to, value);
     }
 
-    function adjustOrderPrice(address sellAsset, address buyAsset, uint96 oldPrice, uint96 newPrice) external
+    function setOrderTimeout(address sellAsset, address buyAsset, uint96 price, uint32 newTimeout) external
+        assetPairValid(sellAsset, buyAsset)
+        priceNonZero(price)
+    {
+        // Sell value of each sell order for this pair.
+        mapping (bytes32 => bytes32) storage orderIdValueTimeout = sellBuyOrderIdValueTimeout[sellAsset][buyAsset];
+
+        bytes32 orderId = encodeOrderId(price);
+
+        (uint224 value, ) = decodeValueTimeout(orderIdValueTimeout[orderId]);
+
+        if (value == 0) {
+            revert OrderNotFound();
+        }
+
+        orderIdValueTimeout[orderId] = encodeValueTimeout(value, newTimeout);
+    }
+
+    function setOrderPrice(address sellAsset, address buyAsset, uint96 oldPrice, uint96 newPrice) external
         assetPairValid(sellAsset, buyAsset)
         priceNonZero(oldPrice)
         priceNonZero(newPrice)
