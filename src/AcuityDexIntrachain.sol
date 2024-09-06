@@ -14,6 +14,7 @@ contract AcuityDexIntrachain {
         uint224 value;
         uint32 timeout;
         // ---------
+        bytes32[] prevHint;
     }
 
     enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
@@ -345,6 +346,7 @@ contract AcuityDexIntrachain {
         (uint224 oldValue,) = decodeValueTimeout(orderValueTimeout[orderId]);
         // Does this order already exist?
         if (oldValue > 0) {
+            // TODO: what if the existing order has timed out?
             orderValueTimeout[orderId] = encodeValueTimeout(oldValue + sellOrder.value, sellOrder.timeout);
             // Log event.
             emit OrderValueAdded(sellOrder.sellAsset, sellOrder.buyAsset, orderId, sellOrder.value, sellOrder.timeout);
@@ -354,9 +356,21 @@ contract AcuityDexIntrachain {
         orderValueTimeout[orderId] = encodeValueTimeout(sellOrder.value, sellOrder.timeout);
         // Linked list of sell orders for this pair, starting with the lowest price.
         mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellOrder.sellAsset][sellOrder.buyAsset];
-        // Find correct place in linked list to insert order.
+        // Check the prev hints for a valid one.
         bytes32 prev = 0;
-        bytes32 next = orderLL[0];
+        uint i = 0;
+        while (i < sellOrder.prevHint.length) {
+            bytes32 prevHint = sellOrder.prevHint[i];
+            (, uint96 prevPrice) = decodeOrderId(prevHint);
+            // Ensure prev is in the linked list and less than or equal to new order.
+            if (orderValueTimeout[prevHint] > 0 && prevPrice <= sellOrder.price) {
+                prev = prevHint;
+                break;
+            }
+            i++;
+        }
+        // Find correct place in linked list to insert order.
+        bytes32 next = orderLL[prev];
         while (next != 0) {
             (, uint96 nextPrice) = decodeOrderId(next);
             // This ensures that new orders go after existing orders with the same price.
