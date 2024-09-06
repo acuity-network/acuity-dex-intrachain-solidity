@@ -363,7 +363,7 @@ contract AcuityDexIntrachain {
             bytes32 prevHint = sellOrder.prevHint[i];
             (, uint96 prevPrice) = decodeOrderId(prevHint);
             // Ensure prev is in the linked list and less than or equal to new order.
-            if (orderValueTimeout[prevHint] > 0 && prevPrice <= sellOrder.price) {
+            if (orderValueTimeout[prevHint] != 0 && prevPrice <= sellOrder.price) {
                 prev = prevHint;
                 break;
             }
@@ -422,9 +422,9 @@ contract AcuityDexIntrachain {
         _deposit(sellOrder.sellAsset, sellOrder.value);
     }
 
-    function deleteOrderLL(address sellAsset, address buyAsset, bytes32 orderId) internal {
+    function deleteOrderLL(SellOrder calldata sellOrder, bytes32 orderId) internal {
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellAsset][buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellOrder.sellAsset][sellOrder.buyAsset];
         // Find the previous sell order.
         bytes32 prev = 0;
         while (orderLL[prev] != orderId) {
@@ -450,8 +450,28 @@ contract AcuityDexIntrachain {
         }
         // Delete the order value.
         delete orderValueTimeout[orderId];
-        // Delete the order from the linked list.
-        deleteOrderLL(sellOrder.sellAsset, sellOrder.buyAsset, orderId);
+        // Check the prev hints for a valid one.
+        bytes32 prev = 0;
+        uint i = 0;
+        while (i < sellOrder.prevHint.length) {
+            bytes32 prevHint = sellOrder.prevHint[i];
+            // Check if prev is in the linked list.
+            if (orderValueTimeout[prevHint] != 0) {
+                prev = prevHint;
+                break;
+            }
+            i++;
+        }
+        // Linked list of sell orders for this pair, starting with the lowest price.
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellOrder.sellAsset][sellOrder.buyAsset];
+        // Find the previous sell order.
+        // If the hint is after orderId, this will loop until gas runs out.
+        while (orderLL[prev] != orderId) {
+            prev = orderLL[prev];
+        }
+        // Remove from linked list.
+        orderLL[prev] = orderLL[orderId];
+        delete orderLL[orderId];
         // Log event.
         emit OrderRemoved(sellOrder.sellAsset, sellOrder.buyAsset, orderId, value);
     }
@@ -492,7 +512,7 @@ contract AcuityDexIntrachain {
             // Delete the order value.
             delete orderValueTimeout[orderId];
             // Delete the order from the linked list.
-            deleteOrderLL(sellOrder.sellAsset, sellOrder.buyAsset, orderId);
+            deleteOrderLL(sellOrder, orderId);
             // Log event.
             emit OrderRemoved(sellOrder.sellAsset, sellOrder.buyAsset, orderId, valueRemoved);
         }

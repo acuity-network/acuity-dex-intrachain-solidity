@@ -100,19 +100,6 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
 
     receive() external payable {}
 
-    function so(address sellAsset, address buyAsset, uint96 price) pure internal
-        returns (SellOrder memory sellOrder)
-    {
-        sellOrder = SellOrder({
-            sellAsset: sellAsset,
-            buyAsset: buyAsset,
-            price: price,
-            value: 0,
-            timeout: 0,
-            prevHint: new bytes32[](0)
-        });
-    }
-
     function so(address sellAsset, address buyAsset, uint96 price, uint224 value, uint32 timeout) pure internal
         returns (SellOrder memory sellOrder)
     {
@@ -135,6 +122,32 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
             price: price,
             value: value,
             timeout: timeout,
+            prevHint: prevHint
+        });
+    }
+
+    function so(address sellAsset, address buyAsset, uint96 price) pure internal
+        returns (SellOrder memory sellOrder)
+    {
+        sellOrder = SellOrder({
+            sellAsset: sellAsset,
+            buyAsset: buyAsset,
+            price: price,
+            value: 0,
+            timeout: 0,
+            prevHint: new bytes32[](0)
+        });
+    }
+
+    function so(address sellAsset, address buyAsset, uint96 price, bytes32[] memory prevHint) pure internal
+        returns (SellOrder memory sellOrder)
+    {
+        sellOrder = SellOrder({
+            sellAsset: sellAsset,
+            buyAsset: buyAsset,
+            price: price,
+            value: 0,
+            timeout: 0,
             prevHint: prevHint
         });
     }
@@ -711,9 +724,11 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         assertEq(orderBook[4].value, 946);
         assertEq(orderBook[4].timeout, t + 4);
 
+        bytes32[] memory prevHint = new bytes32[](0);
+        SellOrder memory sellOrder = so(address(0), address(8), 16, prevHint);
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 16), 94);
-        harness._removeOrderHarness(so(address(0), address(8), 16));
+        harness._removeOrderHarness(sellOrder);
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 4);
         assertEq(orderBook[0].account, address(this));
@@ -733,9 +748,12 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         assertEq(orderBook[3].value, 946);
         assertEq(orderBook[3].timeout, t + 4);
 
+        prevHint = new bytes32[](1);
+        prevHint[0] = harness.encodeOrderIdHarness(address(this), 17);
+        sellOrder = so(address(0), address(8), 18, prevHint);
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 18), 90);
-        harness._removeOrderHarness(so(address(0), address(8), 18));
+        harness._removeOrderHarness(sellOrder);
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 3);
         assertEq(orderBook[0].account, address(this));
@@ -751,9 +769,13 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         assertEq(orderBook[2].value, 946);
         assertEq(orderBook[2].timeout, t + 4);
 
+        prevHint = new bytes32[](2);
+        prevHint[0] = harness.encodeOrderIdHarness(address(this), 16);
+        prevHint[1] = harness.encodeOrderIdHarness(address(this), 17);
+        sellOrder = so(address(0), address(8), 180973, prevHint);
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 180973), 946);
-        harness._removeOrderHarness(so(address(0), address(8), 180973));
+        harness._removeOrderHarness(sellOrder);
         orderBook = harness.getOrderBook(address(0), address(8), 0);
         assertEq(orderBook.length, 2);
         assertEq(orderBook[0].account, address(this));
@@ -765,6 +787,10 @@ contract AcuityDexIntrachainTest is AcuityDexIntrachain, Test {
         assertEq(orderBook[1].value, 93);
         assertEq(orderBook[1].timeout, t + 3);
 
+        prevHint = new bytes32[](2);
+        prevHint[0] = harness.encodeOrderIdHarness(address(this), 16);
+        prevHint[1] = harness.encodeOrderIdHarness(address(this), 17);
+        sellOrder = so(address(0), address(8), 180973, prevHint);
         vm.expectEmit(false, false, false, true);
         emit OrderRemoved(address(0), address(8), harness.encodeOrderIdHarness(address(this), 180972), 93);
         harness._removeOrderHarness(so(address(0), address(8), 180972));
