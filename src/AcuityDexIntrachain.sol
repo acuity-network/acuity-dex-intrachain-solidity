@@ -422,19 +422,6 @@ contract AcuityDexIntrachain {
         _deposit(sellOrder.sellAsset, sellOrder.value);
     }
 
-    function deleteOrderLL(SellOrder calldata sellOrder, bytes32 orderId) internal {
-        // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[sellOrder.sellAsset][sellOrder.buyAsset];
-        // Find the previous sell order.
-        bytes32 prev = 0;
-        while (orderLL[prev] != orderId) {
-            prev = orderLL[prev];
-        }
-        // Remove from linked list.        
-        orderLL[prev] = orderLL[orderId];
-        delete orderLL[orderId];
-    }
-
     function _removeOrder(SellOrder calldata sellOrder) internal
         returns (uint value)
     {
@@ -508,13 +495,7 @@ contract AcuityDexIntrachain {
         }
         // Is the whole order being deleted?
         if (sellOrder.value >= value) {
-            valueRemoved = value;
-            // Delete the order value.
-            delete orderValueTimeout[orderId];
-            // Delete the order from the linked list.
-            deleteOrderLL(sellOrder, orderId);
-            // Log event.
-            emit OrderRemoved(sellOrder.sellAsset, sellOrder.buyAsset, orderId, valueRemoved);
+            valueRemoved = _removeOrder(sellOrder);
         }
         else {
             orderValueTimeout[orderId] = encodeValueTimeout(value - sellOrder.value, sellOrder.timeout);
