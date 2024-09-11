@@ -17,17 +17,6 @@ contract AcuityDexIntrachain {
         bytes32[] prevHint;
     }
 
-    enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
-
-    struct BuyOrder {
-        BuyOrderType orderType;
-        address sellAsset;
-        address buyAsset;
-        uint224 sellValue;
-        uint buyValue;
-        uint priceLimit;
-    }
-
     /**
      * @dev Mapping of asset to account to balance.
      */
@@ -614,23 +603,33 @@ contract AcuityDexIntrachain {
         }
     }
 
-    function matchSellExact(BuyOrder calldata buyOrder) internal
+    struct MatchSellExactParams {
+        address sellAsset;
+        address buyAsset;
+        uint224 sellValue;
+        uint buyValueLimit;
+    }
+
+    /**
+     * Purchase sellValue quanity of sellAsset. Quantity of buyAsset spent is returned as buyValue.
+     */
+    function matchSellExact(MatchSellExactParams memory params) internal
         returns (uint buyValue)
     {
         // Determine the value of 1 big unit of sell asset.
-        uint sellAssetBigUnit = getAssetBigUnit(buyOrder.sellAsset);
+        uint sellAssetBigUnit = getAssetBigUnit(params.sellAsset);
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[buyOrder.sellAsset][buyOrder.buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[params.sellAsset][params.buyAsset];
         // Sell value and timeout of each sell order for this pair.
-        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[buyOrder.sellAsset][buyOrder.buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[params.sellAsset][params.buyAsset];
         // Sell asset account balances.
-        mapping (address => uint) storage sellAssetAccountBalance = assetAccountBalance[buyOrder.sellAsset];
+        mapping (address => uint) storage sellAssetAccountBalance = assetAccountBalance[params.sellAsset];
         // Buy asset account balances.
-        mapping (address => uint) storage buyAssetAccountBalance = assetAccountBalance[buyOrder.buyAsset];
+        mapping (address => uint) storage buyAssetAccountBalance = assetAccountBalance[params.buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        uint sellValue = buyOrder.sellValue;
+        uint224 sellValue = params.sellValue;
         while (sellValue != 0) {
             // Check if we have run out of orders.
             if (orderId == 0) revert NoMatch();
@@ -642,7 +641,7 @@ contract AcuityDexIntrachain {
                 // Refund the seller.
                 sellAssetAccountBalance[sellAccount] += orderSellValue;
                 // Log event.
-                emit OrderRemoved(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
+                emit OrderRemoved(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
@@ -652,7 +651,7 @@ contract AcuityDexIntrachain {
                 continue;
             }
             // Is there a full or partial match?
-            if (buyOrder.sellValue >= orderSellValue) {
+            if (sellValue >= orderSellValue) {
                 // Full match.
                 // Calculate how much buy asset it will take to buy this order.
                 uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
@@ -662,7 +661,7 @@ contract AcuityDexIntrachain {
                 // Pay seller.
                 buyAssetAccountBalance[sellAccount] += orderBuyValue;
                 // Log the event.
-                emit OrderFullMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
+                emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
@@ -672,42 +671,52 @@ contract AcuityDexIntrachain {
             else {
                 // Partial match.
                 // Calculate how much of the sell asset can be bought at the current order's price.
-                uint partialBuyValue = (buyOrder.sellValue * price) / sellAssetBigUnit;
+                uint partialBuyValue = (sellValue * price) / sellAssetBigUnit;
                 // Update buy balance.
                 buyValue += partialBuyValue;
                 // Pay seller.
                 buyAssetAccountBalance[sellAccount] += partialBuyValue;
                 // Update order value. Will not be 0.
-                orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - buyOrder.sellValue, timeout);
+                orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - sellValue, timeout);
                 // Update remaining sell value.
                 sellValue = 0;
                 // Log the event.
-                emit OrderPartialMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, buyOrder.sellValue);
+                emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, params.sellValue);
             }
             // Ensure that the amount spent was not above the limit.
-            if (buyValue > buyOrder.buyValue) revert NoMatch();
+            if (buyValue > params.buyValueLimit) revert NoMatch();
         }
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
     }
 
-    function matchBuyExact(BuyOrder calldata buyOrder) internal
+    struct MatchBuyExactParams {
+        address sellAsset;
+        address buyAsset;
+        uint224 buyValue;
+        uint sellValueLimit;
+    }
+
+    /**
+     * Sell buyValue quanity of buyAsset. Quantity of sellAsset purchased is returned as sellValue.
+     */
+    function matchBuyExact(MatchBuyExactParams memory params) internal
         returns (uint sellValue)
     {
         // Determine the value of 1 big unit of sell asset.
-        uint sellAssetBigUnit = getAssetBigUnit(buyOrder.sellAsset);
+        uint sellAssetBigUnit = getAssetBigUnit(params.sellAsset);
         // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[buyOrder.sellAsset][buyOrder.buyAsset];
+        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[params.sellAsset][params.buyAsset];
         // Sell value and timeout of each sell order for this pair.
-        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[buyOrder.sellAsset][buyOrder.buyAsset];
+        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[params.sellAsset][params.buyAsset];
         // Sell asset account balances.
-        mapping (address => uint) storage sellAssetAccountBalance = assetAccountBalance[buyOrder.sellAsset];
+        mapping (address => uint) storage sellAssetAccountBalance = assetAccountBalance[params.sellAsset];
         // Buy asset account balances.
-        mapping (address => uint) storage buyAssetAccountBalance = assetAccountBalance[buyOrder.buyAsset];
+        mapping (address => uint) storage buyAssetAccountBalance = assetAccountBalance[params.buyAsset];
         // Get the first sell order.
         bytes32 start = orderLL[0];
         bytes32 orderId = start;
-        uint buyValue = buyOrder.buyValue;
+        uint buyValue = params.buyValue;
         while (buyValue != 0) {
             // Check if we have run out of orders.
             if (orderId == 0) revert NoMatch();
@@ -719,7 +728,7 @@ contract AcuityDexIntrachain {
                 // Refund the seller.
                 sellAssetAccountBalance[sellAccount] += orderSellValue;
                 // Log event.
-                emit OrderRemoved(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
+                emit OrderRemoved(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
@@ -739,7 +748,7 @@ contract AcuityDexIntrachain {
                 // Pay seller.
                 buyAssetAccountBalance[sellAccount] += orderBuyValue;
                 // Log the event.
-                emit OrderFullMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
+                emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                 // Delete the order.
                 bytes32 next = orderLL[orderId];
                 delete orderLL[orderId];
@@ -768,12 +777,12 @@ contract AcuityDexIntrachain {
                     orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue, timeout);
                 }
                 // Log the event.
-                emit OrderPartialMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, partialSellValue);
+                emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, partialSellValue);
                 // Exit.
                 break;
             }
         }
-        if (sellValue < buyOrder.sellValue) revert NoMatch();
+        if (sellValue < params.sellValueLimit) revert NoMatch();
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
     }
@@ -863,16 +872,39 @@ contract AcuityDexIntrachain {
         if (start != orderId) orderLL[0] = orderId;
     }
 
+    enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
+
+    struct BuyOrder {
+        BuyOrderType orderType;
+        address sellAsset;
+        address buyAsset;
+        uint224 sellValue;
+        uint224 buyValue;
+        uint priceLimit;
+    }
+
     function matchBuyOrder(BuyOrder calldata order) internal 
         assetPairValid(order.sellAsset, order.buyAsset)
         returns (uint sellValue, uint buyValue)
     {
         if (order.orderType == BuyOrderType.SellValueExact) {
-            buyValue = matchSellExact(order);
+            MatchSellExactParams memory params = MatchSellExactParams({
+                sellAsset: order.sellAsset,
+                buyAsset: order.buyAsset,
+                sellValue: order.sellValue,
+                buyValueLimit: order.buyValue
+            });
+            buyValue = matchSellExact(params);
             sellValue = order.sellValue;
         }
         else if (order.orderType == BuyOrderType.BuyValueExact) {
-            sellValue = matchBuyExact(order);
+            MatchBuyExactParams memory params = MatchBuyExactParams({
+                sellAsset: order.sellAsset,
+                buyAsset: order.buyAsset,
+                buyValue: order.buyValue,
+                sellValueLimit: order.sellValue
+            });
+            sellValue = matchBuyExact(params);
             buyValue = order.buyValue;
         }
         else {
