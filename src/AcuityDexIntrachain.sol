@@ -786,7 +786,7 @@ contract AcuityDexIntrachain {
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
     }
-
+/*
     function matchLimit(BuyOrder calldata buyOrder) internal
         returns (uint sellValue, uint buyValue)
     {
@@ -871,26 +871,25 @@ contract AcuityDexIntrachain {
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
     }
-
+*/
     enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
 
     struct BuyOrder {
         BuyOrderType orderType;
-        address sellAsset;
-        address buyAsset;
+        address[] route;
         uint224 sellValue;
         uint224 buyValue;
-        uint priceLimit;
+        // uint priceLimit;
     }
 
     function matchBuyOrder(BuyOrder calldata order) internal 
-        assetPairValid(order.sellAsset, order.buyAsset)
+        // assetPairValid(order.sellAsset, order.buyAsset)
         returns (uint sellValue, uint buyValue)
     {
         if (order.orderType == BuyOrderType.SellValueExact) {
             MatchSellExactParams memory params = MatchSellExactParams({
-                sellAsset: order.sellAsset,
-                buyAsset: order.buyAsset,
+                sellAsset: order.route[1],
+                buyAsset: order.route[0],
                 sellValue: order.sellValue,
                 buyValueLimit: order.buyValue
             });
@@ -899,8 +898,8 @@ contract AcuityDexIntrachain {
         }
         else if (order.orderType == BuyOrderType.BuyValueExact) {
             MatchBuyExactParams memory params = MatchBuyExactParams({
-                sellAsset: order.sellAsset,
-                buyAsset: order.buyAsset,
+                sellAsset: order.route[1],
+                buyAsset: order.route[0],
                 buyValue: order.buyValue,
                 sellValueLimit: order.sellValue
             });
@@ -911,7 +910,7 @@ contract AcuityDexIntrachain {
             // (sellValue, buyValue) = matchLimit(order);
         }
         // Log the event.
-        emit MatchingCompleted(order.sellAsset, order.buyAsset, msg.sender, sellValue, buyValue);
+        emit MatchingCompleted(order.route[1], order.route[0], msg.sender, sellValue, buyValue);
     }
 
     /**
@@ -921,11 +920,11 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Check there is sufficient balance.
-        mapping(address => uint256) storage accountBalance = assetAccountBalance[order.buyAsset];
+        mapping(address => uint256) storage accountBalance = assetAccountBalance[order.route[0]];
         if (accountBalance[msg.sender] < buyValue) revert InsufficientBalance();
         // Update buyer's balances.
         accountBalance[msg.sender] -= buyValue;
-        assetAccountBalance[order.sellAsset][msg.sender] += sellValue;
+        assetAccountBalance[order.route[1]][msg.sender] += sellValue;
     }
 
     /**
@@ -937,12 +936,12 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Check there is sufficient balance.
-        mapping(address => uint256) storage accountBalance = assetAccountBalance[order.buyAsset];
+        mapping(address => uint256) storage accountBalance = assetAccountBalance[order.route[0]];
         if (accountBalance[msg.sender] < buyValue) revert InsufficientBalance();
         // Update buyer's buy asset balance.
         accountBalance[msg.sender] -= buyValue;
         // Transfer the sell asset.
-        _withdraw(order.sellAsset, to, sellValue);
+        _withdraw(order.route[1], to, sellValue);
     }
 
     /**
@@ -952,9 +951,9 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Update buyer's sell asset balance.
-        assetAccountBalance[order.sellAsset][msg.sender] += sellValue;
+        assetAccountBalance[order.route[0]][msg.sender] += sellValue;
         // Transfer the buy assets from the buyer to this contract.
-        _deposit(order.buyAsset, buyValue);
+        _deposit(order.route[1], buyValue);
     }
 
     /**
@@ -966,9 +965,9 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Transfer the buy assets from the buyer to this contract.
-        _deposit(order.buyAsset, buyValue);
+        _deposit(order.route[0], buyValue);
         // Transfer the sell asset.
-        _withdraw(order.sellAsset, to, sellValue);
+        _withdraw(order.route[1], to, sellValue);
     }
 
     /**
