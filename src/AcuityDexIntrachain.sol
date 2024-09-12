@@ -127,6 +127,11 @@ contract AcuityDexIntrachain {
     /**
      * @dev
      */
+    error LimitExceeded();
+
+    /**
+     * @dev
+     */
     error DepositFailed(address asset, address from, uint value);
 
     /**
@@ -898,7 +903,7 @@ contract AcuityDexIntrachain {
                 }
             }
             // Ensure that the amount spent was not above the limit.
-            if (buyValue > order.buyValue) revert NoMatch();
+            if (buyValue > order.buyValue) revert LimitExceeded();
             sellValue = order.sellValue;
         }
         else if (order.orderType == BuyOrderType.BuyValueExact) {
@@ -918,7 +923,7 @@ contract AcuityDexIntrachain {
                 }
             }
             // Ensure that the amount bought was not below the limit.
-            if (sellValue < order.sellValue) revert NoMatch();
+            if (sellValue < order.sellValue) revert LimitExceeded();
             buyValue = order.buyValue;
         }
         else {
