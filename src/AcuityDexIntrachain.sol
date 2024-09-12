@@ -607,7 +607,6 @@ contract AcuityDexIntrachain {
         address sellAsset;
         address buyAsset;
         uint224 sellValue;
-        uint buyValueLimit;
     }
 
     /**
@@ -678,13 +677,11 @@ contract AcuityDexIntrachain {
                 buyAssetAccountBalance[sellAccount] += partialBuyValue;
                 // Update order value. Will not be 0.
                 orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - sellValue, timeout);
-                // Update remaining sell value.
-                sellValue = 0;
                 // Log the event.
                 emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, params.sellValue);
+                // Stop processing orders.
+                break;
             }
-            // Ensure that the amount spent was not above the limit.
-            if (buyValue > params.buyValueLimit) revert NoMatch();
         }
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
@@ -694,7 +691,6 @@ contract AcuityDexIntrachain {
         address sellAsset;
         address buyAsset;
         uint224 buyValue;
-        uint sellValueLimit;
     }
 
     /**
@@ -782,7 +778,6 @@ contract AcuityDexIntrachain {
                 break;
             }
         }
-        if (sellValue < params.sellValueLimit) revert NoMatch();
         // Update first order if neccessary.
         if (start != orderId) orderLL[0] = orderId;
     }
@@ -876,7 +871,7 @@ contract AcuityDexIntrachain {
 
     struct BuyOrder {
         BuyOrderType orderType;
-        address[] route;
+        address[] route;  // Route from buy asset to sell asset.
         uint224 sellValue;
         uint224 buyValue;
         // uint priceLimit;
@@ -887,30 +882,50 @@ contract AcuityDexIntrachain {
         returns (uint sellValue, uint buyValue)
     {
         if (order.orderType == BuyOrderType.SellValueExact) {
-            MatchSellExactParams memory params = MatchSellExactParams({
-                sellAsset: order.route[1],
-                buyAsset: order.route[0],
-                sellValue: order.sellValue,
-                buyValueLimit: order.buyValue
-            });
-            buyValue = matchSellExact(params);
+            sellValue = order.sellValue;
+            for (uint i = order.route.length - 1; i > 0; i--) {
+                MatchSellExactParams memory params = MatchSellExactParams({
+                    sellAsset: order.route[i],
+                    buyAsset: order.route[i - 1],
+                    sellValue: uint224(sellValue)
+                });
+                // Is this the last hop?
+                if (i == 1) {
+                    buyValue = matchSellExact(params);
+                }
+                else {
+                    sellValue = matchSellExact(params);
+                }
+            }
+            // Ensure that the amount spent was not above the limit.
+            if (buyValue > order.buyValue) revert NoMatch();
             sellValue = order.sellValue;
         }
         else if (order.orderType == BuyOrderType.BuyValueExact) {
-            MatchBuyExactParams memory params = MatchBuyExactParams({
-                sellAsset: order.route[1],
-                buyAsset: order.route[0],
-                buyValue: order.buyValue,
-                sellValueLimit: order.sellValue
-            });
-            sellValue = matchBuyExact(params);
+            buyValue = order.buyValue;
+            for (uint i = 0; i < order.route.length; i++) {
+                MatchBuyExactParams memory params = MatchBuyExactParams({
+                    sellAsset: order.route[i + 1],
+                    buyAsset: order.route[i],
+                    buyValue: uint224(buyValue)
+                });
+                // Is this the last hop?
+                if (i == order.route.length - 2) {
+                    sellValue = matchBuyExact(params);
+                }
+                else {
+                    buyValue = matchBuyExact(params);
+                }
+            }
+            // Ensure that the amount bought was not below the limit.
+            if (sellValue < order.sellValue) revert NoMatch();
             buyValue = order.buyValue;
         }
         else {
             // (sellValue, buyValue) = matchLimit(order);
         }
         // Log the event.
-        emit MatchingCompleted(order.route[1], order.route[0], msg.sender, sellValue, buyValue);
+        emit MatchingCompleted(order.route[order.route.length - 1], order.route[0], msg.sender, sellValue, buyValue);
     }
 
     /**
@@ -924,7 +939,7 @@ contract AcuityDexIntrachain {
         if (accountBalance[msg.sender] < buyValue) revert InsufficientBalance();
         // Update buyer's balances.
         accountBalance[msg.sender] -= buyValue;
-        assetAccountBalance[order.route[1]][msg.sender] += sellValue;
+        assetAccountBalance[order.route[order.route.length - 1]][msg.sender] += sellValue;
     }
 
     /**
@@ -941,7 +956,7 @@ contract AcuityDexIntrachain {
         // Update buyer's buy asset balance.
         accountBalance[msg.sender] -= buyValue;
         // Transfer the sell asset.
-        _withdraw(order.route[1], to, sellValue);
+        _withdraw(order.route[order.route.length - 1], to, sellValue);
     }
 
     /**
@@ -951,9 +966,9 @@ contract AcuityDexIntrachain {
         // Execute the buy.
         (uint sellValue, uint buyValue) = matchBuyOrder(order);
         // Update buyer's sell asset balance.
-        assetAccountBalance[order.route[0]][msg.sender] += sellValue;
+        assetAccountBalance[order.route[order.route.length - 1]][msg.sender] += sellValue;
         // Transfer the buy assets from the buyer to this contract.
-        _deposit(order.route[1], buyValue);
+        _deposit(order.route[0], buyValue);
     }
 
     /**
@@ -967,7 +982,7 @@ contract AcuityDexIntrachain {
         // Transfer the buy assets from the buyer to this contract.
         _deposit(order.route[0], buyValue);
         // Transfer the sell asset.
-        _withdraw(order.route[1], to, sellValue);
+        _withdraw(order.route[order.route.length - 1], to, sellValue);
     }
 
     /**
