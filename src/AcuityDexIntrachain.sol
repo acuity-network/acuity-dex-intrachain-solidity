@@ -639,15 +639,9 @@ contract AcuityDexIntrachain {
                 sellAssetAccountBalance[sellAccount] += orderSellValue;
                 // Log event.
                 emit OrderRemoved(params.sellAsset, params.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId].next;
-                delete orderLL[orderId];
-                orderId = next;
-                // Goto next order.
-                continue;
             }
             // Is there a full or partial match?
-            if (sellValue >= orderSellValue) {
+            else if (sellValue >= orderSellValue) {
                 // Full match.
                 // Calculate how much buy asset it will take to buy this order.
                 uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
@@ -658,10 +652,6 @@ contract AcuityDexIntrachain {
                 buyAssetAccountBalance[sellAccount] += orderBuyValue;
                 // Log the event.
                 emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId].next;
-                delete orderLL[orderId];
-                orderId = next;
             }
             else {
                 // Partial match.
@@ -678,6 +668,10 @@ contract AcuityDexIntrachain {
                 // Stop processing orders.
                 break;
             }
+            // Delete the order.
+            bytes32 next = orderLL[orderId].next;
+            delete orderLL[orderId];
+            orderId = next;
         }
         // Update first order if neccessary.
         if (start != orderId) orderLL[0].next = orderId;
@@ -719,55 +713,51 @@ contract AcuityDexIntrachain {
                 sellAssetAccountBalance[sellAccount] += orderSellValue;
                 // Log event.
                 emit OrderRemoved(params.sellAsset, params.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId].next;
-                delete orderLL[orderId];
-                orderId = next;
-                // Goto next order.
-                continue;
-            }
-            // Calculate how much buy asset it will take to buy this order.
-            uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
-            // Is there a full or partial match?
-            if (buyValue >= orderBuyValue) {
-                // Full match. Update sell balance.
-                sellValue += orderSellValue;
-                // Update remaining buy limit.
-                buyValue -= orderBuyValue;
-                // Pay seller.
-                buyAssetAccountBalance[sellAccount] += orderBuyValue;
-                // Log the event.
-                emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId].next;
-                delete orderLL[orderId];
-                orderId = next;
             }
             else {
-                // Partial match.
-                // Calculate how much of the sell asset can be bought at the current order's price.
-                uint224 partialSellValue = uint224((buyValue * sellAssetBigUnit) / price);
-                // Update sell balance.
-                sellValue += partialSellValue;
-                // Pay seller.
-                buyAssetAccountBalance[sellAccount] += buyValue;
-                // Update order value.
-                orderSellValue -= partialSellValue;
-                // It may be possible for the order to be consumed entirely due to rounding error.
-                if (orderSellValue == 0) {
-                    // Delete the order.
-                    bytes32 next = orderLL[orderId].next;
-                    delete orderLL[orderId];
-                    orderId = next;
+                // Calculate how much buy asset it will take to buy this order.
+                uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
+                // Is there a full or partial match?
+                if (buyValue >= orderBuyValue) {
+                    // Full match. Update sell balance.
+                    sellValue += orderSellValue;
+                    // Update remaining buy limit.
+                    buyValue -= orderBuyValue;
+                    // Pay seller.
+                    buyAssetAccountBalance[sellAccount] += orderBuyValue;
+                    // Log the event.
+                    emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                 }
                 else {
-                    orderLL[orderId].valueTimeout = encodeValueTimeout(orderSellValue, timeout);
+                    // Partial match.
+                    // Calculate how much of the sell asset can be bought at the current order's price.
+                    uint224 partialSellValue = uint224((buyValue * sellAssetBigUnit) / price);
+                    // Update sell balance.
+                    sellValue += partialSellValue;
+                    // Pay seller.
+                    buyAssetAccountBalance[sellAccount] += buyValue;
+                    // Update order value.
+                    orderSellValue -= partialSellValue;
+                    // It may be possible for the order to be consumed entirely due to rounding error.
+                    if (orderSellValue == 0) {
+                        // Delete the order.
+                        bytes32 next = orderLL[orderId].next;
+                        delete orderLL[orderId];
+                        orderId = next;
+                    }
+                    else {
+                        orderLL[orderId].valueTimeout = encodeValueTimeout(orderSellValue, timeout);
+                    }
+                    // Log the event.
+                    emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, partialSellValue);
+                    // Exit.
+                    break;
                 }
-                // Log the event.
-                emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, partialSellValue);
-                // Exit.
-                break;
             }
+            // Delete the order.
+            bytes32 next = orderLL[orderId].next;
+            delete orderLL[orderId];
+            orderId = next;
         }
         // Update first order if neccessary.
         if (start != orderId) orderLL[0].next = orderId;
