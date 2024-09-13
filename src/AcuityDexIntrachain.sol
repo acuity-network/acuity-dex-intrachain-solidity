@@ -762,93 +762,8 @@ contract AcuityDexIntrachain {
         // Update first order if neccessary.
         if (start != orderId) orderLL[0].next = orderId;
     }
-/*
-    function matchLimit(BuyOrder calldata buyOrder) internal
-        returns (uint sellValue, uint buyValue)
-    {
-        // A limit of 0 is no limit.
-        uint sellLimit = (buyOrder.sellValue == 0) ? type(uint).max : buyOrder.sellValue;
-        uint buyLimit = (buyOrder.buyValue == 0) ? type(uint).max : buyOrder.buyValue;
-        uint priceLimit = (buyOrder.priceLimit == 0) ? type(uint).max : buyOrder.priceLimit;
-        // Determine the value of 1 big unit of sell asset.
-        uint sellAssetBigUnit = getAssetBigUnit(buyOrder.sellAsset);
-        // Linked list of sell orders for this pair, starting with the lowest price.
-        mapping (bytes32 => bytes32) storage orderLL = sellBuyOrderIdLL[buyOrder.sellAsset][buyOrder.buyAsset];
-        // Sell value and timeout of each sell order for this pair.
-        mapping (bytes32 => bytes32) storage orderValueTimeout = sellBuyOrderIdValueTimeout[buyOrder.sellAsset][buyOrder.buyAsset];
-        // Sell asset account balances.
-        mapping (address => uint) storage sellAssetAccountBalance = assetAccountBalance[buyOrder.sellAsset];
-        // Buy asset account balances.
-        mapping (address => uint) storage buyAssetAccountBalance = assetAccountBalance[buyOrder.buyAsset];
-        bytes32 start = orderLL[0];
-        bytes32 orderId = start;
-        while (orderId != 0 && buyLimit != 0 && sellLimit != 0) {
-            // Get order account, price, value and timeout.
-            (address sellAccount, uint price) = decodeOrderId(orderId);
-            (uint224 orderSellValue, uint32 timeout) = decodeValueTimeout(orderValueTimeout[orderId]);
-            // Has the order timed out?
-            if (timeout <= block.timestamp) {
-                // Refund the seller.
-                sellAssetAccountBalance[sellAccount] += orderSellValue;
-                // Log event.
-                emit OrderRemoved(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId];
-                delete orderLL[orderId];
-                delete orderValueTimeout[orderId];
-                orderId = next;
-                // Goto next order.
-                continue;
-            }
-            // Check if we have hit the price limit.
-            if (price > priceLimit) break;
-            // Calculate how much buy asset it will take to buy this order.
-            uint orderBuyValue = (orderSellValue * price) / sellAssetBigUnit;
-            // Is there a full or partial match?
-            if (sellLimit >= orderSellValue && buyLimit >= orderBuyValue) {
-                // Full match.
-                // Update buyer balances.
-                sellValue += orderSellValue;
-                buyValue += orderBuyValue;
-                // Update remaining buy limit.
-                sellLimit -= orderSellValue;
-                buyLimit -= orderBuyValue;
-                // Pay seller.
-                buyAssetAccountBalance[sellAccount] += orderBuyValue;
-                // Log the event.
-                emit OrderFullMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, orderSellValue);
-                // Delete the order.
-                bytes32 next = orderLL[orderId];
-                delete orderLL[orderId];
-                delete orderValueTimeout[orderId];
-                orderId = next;
-            }
-            else {
-                // Partial match.
-                // Calculate how much of the sell asset can be bought at the current order's price.
-                uint224 sellValueLimit = uint224((buyLimit * sellAssetBigUnit) / price);
-                // Update buyer balances.
-                sellValue += sellValueLimit;
-                buyValue += buyLimit;
-                // Buy limit has now been spent.
-                buyLimit = 0;
-                // Pay seller.
-                buyAssetAccountBalance[sellAccount] += buyLimit;
-                // Update order value.
-                orderValueTimeout[orderId] = encodeValueTimeout(orderSellValue - sellValueLimit, timeout); // TODO: ensure this isn't 0
-                // Log the event.
-                emit OrderPartialMatch(buyOrder.sellAsset, buyOrder.buyAsset, orderId, sellValueLimit);
-                // Exit.
-                break;
-            }
-        }
-        // Was anything bought?
-        if (sellValue == 0) revert NoMatch();
-        // Update first order if neccessary.
-        if (start != orderId) orderLL[0] = orderId;
-    }
-*/
-    enum BuyOrderType { SellValueExact, BuyValueExact, Limit }
+
+    enum BuyOrderType { SellValueExact, BuyValueExact }
 
     struct BuyOrder {
         BuyOrderType orderType;
@@ -882,7 +797,7 @@ contract AcuityDexIntrachain {
             if (buyValue > order.buyValue) revert LimitExceeded();
             sellValue = order.sellValue;
         }
-        else if (order.orderType == BuyOrderType.BuyValueExact) {
+        else {
             buyValue = order.buyValue;
             for (uint i = 0; i < order.route.length; i++) {
                 MatchBuyExactParams memory params = MatchBuyExactParams({
@@ -901,9 +816,6 @@ contract AcuityDexIntrachain {
             // Ensure that the amount bought was not below the limit.
             if (sellValue < order.sellValue) revert LimitExceeded();
             buyValue = order.buyValue;
-        }
-        else {
-            // (sellValue, buyValue) = matchLimit(order);
         }
         // Log the event.
         emit MatchingCompleted(order.route[order.route.length - 1], order.route[0], msg.sender, sellValue, buyValue);
