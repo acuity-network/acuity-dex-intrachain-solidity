@@ -740,18 +740,16 @@ contract AcuityDexIntrachain {
                     orderSellValue -= partialSellValue;
                     // It may be possible for the order to be consumed entirely due to rounding error.
                     if (orderSellValue == 0) {
-                        // Delete the order.
-                        bytes32 next = orderLL[orderId].next;
-                        delete orderLL[orderId];
-                        orderId = next;
+                        // Log the event.
+                        emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                     }
                     else {
                         orderLL[orderId].valueTimeout = encodeValueTimeout(orderSellValue, timeout);
+                        // Log the event.
+                        emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, partialSellValue);
+                        // Exit.
+                        break;
                     }
-                    // Log the event.
-                    emit OrderPartialMatch(params.sellAsset, params.buyAsset, orderId, partialSellValue);
-                    // Exit.
-                    break;
                 }
             }
             // Delete the order.
