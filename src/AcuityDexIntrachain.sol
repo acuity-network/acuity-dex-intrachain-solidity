@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.28;
 
 import "./ERC20.sol";
 
@@ -740,6 +740,7 @@ contract AcuityDexIntrachain {
                     orderSellValue -= partialSellValue;
                     // It may be possible for the order to be consumed entirely due to rounding error.
                     if (orderSellValue == 0) {
+                        buyValue = 0;
                         // Log the event.
                         emit OrderFullMatch(params.sellAsset, params.buyAsset, orderId, orderSellValue);
                     }
